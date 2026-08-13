@@ -1,0 +1,14 @@
+# Local builds and compiler output
+ChatGPTApiOnly.test.exe
+*.pdb
+*.tmp
+*.tmp-*
+
+# Local Codex configuration and backups
+config.toml
+auth.json
+*.bak
+backups_state/
+
+# Machine-specific documentation
+README.local.md

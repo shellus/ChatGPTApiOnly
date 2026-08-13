@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-13T00:00:00Z","type":"session_meta","payload":{"id":"thread-active","model_provider":"legacy-provider"}}
+{"timestamp":"2026-08-13T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"fixture"}}
