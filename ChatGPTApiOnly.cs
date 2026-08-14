@@ -27,6 +27,14 @@ internal static class ChatGPTApiOnly
     private static void Main(string[] args)
     {
 #if PROVIDER_SYNC_TEST
+        if (args.Length == 1 && args[0] == "--test-loading-ui")
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new LoadingForm(ConfigStore.Load(), true));
+            return;
+        }
+
         if (args.Length == 1 && args[0] == "--test-provider-sync")
         {
             try
@@ -81,6 +89,10 @@ internal static class ChatGPTApiOnly
         private string packageRoot;
         private int lastSecondsRemaining = -1;
         private bool openingConfiguration;
+
+#if PROVIDER_SYNC_TEST
+        private bool simulateStartup;
+#endif
 
         internal LoadingForm(ConfigData initialConfig)
         {
@@ -183,10 +195,21 @@ internal static class ChatGPTApiOnly
             pollTimer.Tick += PollTimerOnTick;
         }
 
+#if PROVIDER_SYNC_TEST
+        internal LoadingForm(ConfigData initialConfig, bool simulateStartup)
+            : this(initialConfig)
+        {
+            this.simulateStartup = simulateStartup;
+        }
+#endif
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
             ResetProgress();
+#if PROVIDER_SYNC_TEST
+            if (simulateStartup) return;
+#endif
             BeginInvoke(new MethodInvoker(StartChatGpt));
         }
 
@@ -283,6 +306,10 @@ internal static class ChatGPTApiOnly
 
         private void PollTimerOnTick(object sender, EventArgs e)
         {
+#if PROVIDER_SYNC_TEST
+            if (!simulateStartup)
+            {
+#endif
             if (FindVisibleChatGptWindow() != IntPtr.Zero)
             {
                 pollTimer.Stop();
@@ -291,6 +318,9 @@ internal static class ChatGPTApiOnly
                 Close();
                 return;
             }
+#if PROVIDER_SYNC_TEST
+            }
+#endif
 
             double elapsedSeconds = elapsed.Elapsed.TotalSeconds;
             double expectedSeconds = ExpectedStartupTime.TotalSeconds;
@@ -942,6 +972,15 @@ internal static class ChatGPTApiOnly
             int completed, int total)
         {
             if (progress != null) progress.Report(new ProviderSyncProgress(completed, total));
+#if PROVIDER_SYNC_TEST
+            int delayMilliseconds;
+            if (Int32.TryParse(
+                Environment.GetEnvironmentVariable("CHATGPT_API_ONLY_PROGRESS_DELAY_MS"),
+                out delayMilliseconds) && delayMilliseconds > 0)
+            {
+                System.Threading.Thread.Sleep(Math.Min(delayMilliseconds, 100));
+            }
+#endif
         }
 
         private static List<RolloutChange> CollectRolloutChanges(string codexHome, string targetProvider)

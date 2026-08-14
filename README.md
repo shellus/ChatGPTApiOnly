@@ -8,6 +8,18 @@ ChatGPT API Only 是 Microsoft Store ChatGPT/Codex 桌面应用的单文件 Wind
 
 源码仓库不跟踪构建产物。GitHub 自动生成的 “Source code” 压缩包只包含源码，不包含可运行 EXE。
 
+## 界面预览
+
+### 启动进度
+
+![ChatGPT API Only 启动进度](docs/images/loading.gif)
+
+### API 配置与对话修复
+
+![ChatGPT API Only API 配置与对话修复](docs/images/config-form.gif)
+
+配置动画使用 `example` 占位值，不包含真实 API 配置或本机信息。
+
 ## 启动流程
 
 - 配置有效时显示预计启动进度并启动桌面应用。

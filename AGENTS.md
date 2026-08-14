@@ -18,6 +18,7 @@
 ## 安全与测试
 
 - 不得把真实 API Key、API 地址、账号、本机路径或 Codex 配置提交到仓库。
+- README 截图或动画只能捕获应用窗口，并使用隔离 fixture 与明显的 `example` 占位值；不得包含桌面背景、终端、用户名或真实配置。
 - Provider 同步测试必须设置 `CHATGPT_API_ONLY_CONFIG_DIR` 并指向隔离 fixture，禁止对真实 Codex 用户目录运行测试入口。
 - 测试入口只能在定义 `PROVIDER_SYNC_TEST` 时编译，正式 EXE 不得包含该入口。
 - 修改同步逻辑时至少验证：成功更新、无变更幂等、数据库失败回滚、备份存在，以及保存配置不会触发同步。
