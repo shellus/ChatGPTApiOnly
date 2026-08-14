@@ -1,6 +1,15 @@
 # ChatGPT API Only
 
-ChatGPT API Only 是 Microsoft Store ChatGPT/Codex 桌面应用的单文件 Windows 启动器。它让 Electron 外壳访问 OpenAI 云端域名时立即失败，同时保留内置 Codex app-server 对自定义 API 的访问。
+桌面版 ChatGPT 启动器，面向使用自定义 API 的 Microsoft Store ChatGPT/Codex 桌面应用。
+
+## 主要功能
+
+1. **不用手动编辑配置文件**
+   通过图形化表单填写提供者名称、API 地址、API Key、模型和推理级别，自动维护 `config.toml` 与 `auth.json`。
+2. **解决启动时卡住一分钟的问题**
+   让启动阶段无法访问的 OpenAI/ChatGPT 外壳地址立即失败，不再等待网络超时。典型启动等待由约 60 秒缩短到约 7 秒（60 秒 → 7 秒），自定义 API 请求不受影响。
+3. **可选修复历史对话丢失问题**
+   需要时手动点击“修复对话”，将本地历史对话重新关联到当前 provider；修复前自动备份，并显示真实的 `n/total` 进度。
 
 ## 下载
 
@@ -28,6 +37,10 @@ ChatGPT API Only 是 Microsoft Store ChatGPT/Codex 桌面应用的单文件 Wind
 - 不使用启动器级单实例锁。
 
 配置写入用户 Codex 目录下的 `config.toml` 与 `auth.json`。真实 API Key 不应写入源码、项目文档或版本控制。
+
+## 工作原理
+
+启动器让 Electron 外壳访问可选的 OpenAI/ChatGPT 云端地址时立即失败，避免不可达网络请求等待超时；内置 Codex app-server 仍按用户配置访问自定义 API。
 
 ## Provider 字段
 
