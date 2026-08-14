@@ -26,5 +26,7 @@
 
 - 构建命令以 `README.md` 为准，正式产物为 `ChatGPTApiOnly.exe`。
 - 源码行为改变后必须重新构建正式 EXE，并确认测试入口未进入正式二进制。
-- 发布 ZIP 只包含正式 `ChatGPTApiOnly.exe`；提交前确认 ZIP 内 EXE 与仓库根目录正式 EXE 的 SHA-256 一致。
+- 正式 EXE 与发布 ZIP 不进入 Git 跟踪，只能作为 GitHub Release 资产分发。
+- 发布 ZIP 只包含正式 `ChatGPTApiOnly.exe`；发布前确认 ZIP 内 EXE 与本地正式 EXE 的 SHA-256 一致。
+- Release tag 使用语义化版本；同一版本的 tag、标题、ZIP 文件名与发布说明必须一致。
 - 提交前检查 `git status`、staged diff、敏感信息扫描结果和构建验证结果。

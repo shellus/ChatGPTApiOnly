@@ -2,6 +2,12 @@
 
 ChatGPT API Only 是 Microsoft Store ChatGPT/Codex 桌面应用的单文件 Windows 启动器。它让 Electron 外壳访问 OpenAI 云端域名时立即失败，同时保留内置 Codex app-server 对自定义 API 的访问。
 
+## 下载
+
+正式 Windows 构建位于 [GitHub Releases](https://github.com/shellus/ChatGPTApiOnly/releases)。可直接下载 `ChatGPTApiOnly.exe`，也可下载版本化 Windows ZIP。
+
+源码仓库不跟踪构建产物。GitHub 自动生成的 “Source code” 压缩包只包含源码，不包含可运行 EXE。
+
 ## 启动流程
 
 - 配置有效时显示预计启动进度并启动桌面应用。
