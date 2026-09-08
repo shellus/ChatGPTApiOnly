@@ -666,7 +666,7 @@ internal static class ChatGPTApiOnly
                     !String.IsNullOrWhiteSpace(Model) &&
                     !String.IsNullOrWhiteSpace(ReasoningEffort) &&
                     String.Equals(WireApi, "responses", StringComparison.Ordinal) &&
-                    RequiresOpenAiAuth == false && authModeValid;
+                    RequiresOpenAiAuth == true && authModeValid;
             }
         }
     }
@@ -802,7 +802,7 @@ internal static class ChatGPTApiOnly
             SetSectionValue(lines, "model_providers.custom", "name", QuoteToml(data.ProviderName));
             SetSectionValue(lines, "model_providers.custom", "base_url", QuoteToml(data.BaseUrl));
             SetSectionValue(lines, "model_providers.custom", "wire_api", QuoteToml("responses"));
-            SetSectionValue(lines, "model_providers.custom", "requires_openai_auth", "false");
+            SetSectionValue(lines, "model_providers.custom", "requires_openai_auth", "true");
             while (lines.Count > 0 && String.IsNullOrWhiteSpace(lines[lines.Count - 1])) lines.RemoveAt(lines.Count - 1);
             return String.Join(Environment.NewLine, lines.ToArray()) + Environment.NewLine;
         }
