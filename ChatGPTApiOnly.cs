@@ -61,6 +61,7 @@ internal static class ChatGPTApiOnly
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        if (!EnsureClientInstalled(null)) return;
         ConfigData config = ConfigStore.Load();
         if (!config.IsValid)
         {
@@ -75,6 +76,94 @@ internal static class ChatGPTApiOnly
         }
 
         Application.Run(new LoadingForm(config));
+    }
+
+    private static bool EnsureClientInstalled(IWin32Window owner)
+    {
+        string packageRoot;
+        return EnsureClientInstalled(FindLatestChatGptExecutable(out packageRoot) != null,
+            delegate
+            {
+                return MessageBox.Show(owner,
+                    "\u672a\u68c0\u6d4b\u5230 ChatGPT \u5ba2\u6237\u7aef\u3002\u662f\u5426\u6253\u5f00 Microsoft Store \u5b89\u88c5\uff1f" +
+                    Environment.NewLine + "\u5b89\u88c5\u5b8c\u6210\u540e\uff0c\u8bf7\u91cd\u65b0\u8fd0\u884c\u672c\u542f\u52a8\u5668\u3002",
+                    "\u5b89\u88c5 ChatGPT", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+            },
+            delegate { ClientStore.Open(false, owner); });
+    }
+
+    private static bool EnsureClientInstalled(bool installed, Func<DialogResult> confirm, Action openStore)
+    {
+        if (installed) return true;
+        if (confirm() == DialogResult.OK) openStore();
+        return false;
+    }
+
+    private static class ClientStore
+    {
+        private const string ProductId = "9PLM9XGG6VKS";
+        private const string WebUrl = "https://apps.microsoft.com/detail/" + ProductId;
+
+        internal static Button CreateButton(bool updates, Point location, int tabIndex, IWin32Window owner)
+        {
+            string description = updates
+                ? "\u6253\u5f00 Microsoft Store \u7684\u4e0b\u8f7d\u548c\u66f4\u65b0\u9875\uff0c\u5728\u5546\u5e97\u4e2d\u68c0\u67e5 ChatGPT \u66f4\u65b0\u3002"
+                : "\u6253\u5f00 ChatGPT \u7684 Microsoft Store \u9875\u9762\uff0c\u53ef\u5b89\u88c5\u6216\u66f4\u65b0\u5ba2\u6237\u7aef\u3002";
+            var button = new Button
+            {
+                Location = location,
+                Size = new Size(112, 30),
+                Text = updates ? "\u68c0\u67e5\u66f4\u65b0" : "\u6253\u5f00\u5e94\u7528\u5546\u5e97",
+                TabIndex = tabIndex,
+                AccessibleDescription = description
+            };
+            button.AccessibleName = button.Text;
+            var tooltip = new ToolTip();
+            tooltip.SetToolTip(button, description);
+            button.Disposed += delegate { tooltip.Dispose(); };
+            button.Click += delegate { Open(updates, owner); };
+            return button;
+        }
+
+        internal static void Open(bool updates, IWin32Window owner)
+        {
+            try
+            {
+                OpenLink(updates, delegate(string uri)
+                {
+                    if (uri.StartsWith("ms-windows-store:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        using (RegistryKey protocol = Registry.ClassesRoot.OpenSubKey("ms-windows-store"))
+                        {
+                            if (protocol == null) throw new InvalidOperationException("Microsoft Store \u672a\u5b89\u88c5\u3002");
+                        }
+                    }
+                    Process.Start(new ProcessStartInfo { FileName = uri, UseShellExecute = true });
+                });
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(owner, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private static void OpenLink(bool updates, Action<string> launch)
+        {
+            string uri = updates ? "ms-windows-store://downloadsandupdates"
+                : "ms-windows-store://pdp/?ProductId=" + ProductId;
+            try { launch(uri); }
+            catch (Exception storeException)
+            {
+                try { launch(WebUrl); }
+                catch (Exception browserException)
+                {
+                    throw new InvalidOperationException(
+                        "\u65e0\u6cd5\u6253\u5f00\u5e94\u7528\u5546\u5e97\u6216\u6d4f\u89c8\u5668\u3002\u8bf7\u624b\u52a8\u8bbf\u95ee\uff1a" + Environment.NewLine + WebUrl +
+                        Environment.NewLine + storeException.Message + Environment.NewLine + browserException.Message,
+                        browserException);
+                }
+            }
+        }
     }
 
     private sealed class LoadingForm : Form
@@ -168,27 +257,20 @@ internal static class ChatGPTApiOnly
                 Location = new Point(280, 112),
                 Size = new Size(112, 30),
                 Text = "\u914d\u7f6e API",
-                TabIndex = 0,
+                TabIndex = 2,
                 AccessibleName = "\u914d\u7f6e API",
                 AccessibleDescription = "\u6253\u5f00\u81ea\u5b9a\u4e49 API \u914d\u7f6e\u3002\u4e5f\u53ef\u6309\u7a7a\u683c\u952e\u3002"
             };
             configureButton.Click += delegate { OpenConfiguration(); };
 
-            var shortcutLabel = new Label
-            {
-                AutoSize = true,
-                Location = new Point(24, 120),
-                ForeColor = SystemColors.GrayText,
-                Text = "\u5feb\u6377\u952e\uff1a\u7a7a\u683c",
-                AccessibleName = "\u914d\u7f6e API \u5feb\u6377\u952e\uff1a\u7a7a\u683c"
-            };
-
             Controls.Add(iconBox);
             Controls.Add(titleLabel);
             Controls.Add(statusLabel);
             Controls.Add(progressBar);
-            Controls.Add(shortcutLabel);
+            Controls.Add(ClientStore.CreateButton(false, new Point(24, 112), 0, this));
+            Controls.Add(ClientStore.CreateButton(true, new Point(144, 112), 1, this));
             Controls.Add(configureButton);
+            ActiveControl = configureButton;
 
             elapsed = new Stopwatch();
             pollTimer = new Timer { Interval = 200 };
@@ -240,9 +322,10 @@ internal static class ChatGPTApiOnly
                 string executable = FindLatestChatGptExecutable(out packageRoot);
                 if (executable == null)
                 {
-                    throw new FileNotFoundException(
-                        "The Microsoft Store OpenAI Codex / ChatGPT application is not installed."
-                    );
+                    pollTimer.Stop();
+                    EnsureClientInstalled(this);
+                    Close();
+                    return;
                 }
 
                 Process.Start(new ProcessStartInfo
@@ -265,7 +348,7 @@ internal static class ChatGPTApiOnly
 
         private void LoadingFormOnKeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode != Keys.Space || openingConfiguration)
+            if (e.KeyCode != Keys.Space || openingConfiguration || ActiveControl is Button)
             {
                 return;
             }
@@ -349,6 +432,8 @@ internal static class ChatGPTApiOnly
         private readonly Button saveButton;
         private readonly Button cancelButton;
         private readonly Button repairButton;
+        private readonly Button storeButton;
+        private readonly Button updatesButton;
         private readonly Label repairProgressCaption;
         private readonly ProgressBar repairProgressBar;
         private readonly Label repairProgressLabel;
@@ -442,7 +527,7 @@ internal static class ChatGPTApiOnly
                 Location = new Point(368, 374),
                 Size = new Size(112, 30),
                 Text = "\u4fdd\u5b58\u5e76\u542f\u52a8",
-                TabIndex = 7
+                TabIndex = 9
             };
             saveButton.Click += SaveButtonOnClick;
 
@@ -452,13 +537,15 @@ internal static class ChatGPTApiOnly
                 Size = new Size(62, 30),
                 Text = "\u53d6\u6d88",
                 DialogResult = DialogResult.Cancel,
-                TabIndex = 8
+                TabIndex = 10
             };
 
             errors = new ErrorProvider { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             errors.ContainerControl = this;
             AcceptButton = saveButton;
             CancelButton = cancelButton;
+            storeButton = ClientStore.CreateButton(false, new Point(24, 374), 7, this);
+            updatesButton = ClientStore.CreateButton(true, new Point(144, 374), 8, this);
             Controls.Add(heading);
             Controls.Add(intro);
             Controls.Add(repairButton);
@@ -467,6 +554,8 @@ internal static class ChatGPTApiOnly
             Controls.Add(repairProgressLabel);
             Controls.Add(saveButton);
             Controls.Add(cancelButton);
+            Controls.Add(storeButton);
+            Controls.Add(updatesButton);
         }
 
         private async void RepairButtonOnClick(object sender, EventArgs e)
@@ -533,8 +622,7 @@ internal static class ChatGPTApiOnly
         private void ShowRepairProgress()
         {
             repairProgressCaption.Text = "\u626b\u63cf\u5bf9\u8bdd";
-            saveButton.Location = new Point(368, 414);
-            cancelButton.Location = new Point(486, 414);
+            SetFooterTop(414);
             ClientSize = new Size(572, 450);
             repairProgressCaption.Visible = true;
             repairProgressBar.Visible = true;
@@ -549,9 +637,14 @@ internal static class ChatGPTApiOnly
             repairProgressBar.Maximum = 1;
             repairProgressBar.Value = 0;
             repairProgressLabel.Text = String.Empty;
-            saveButton.Location = new Point(368, 374);
-            cancelButton.Location = new Point(486, 374);
+            SetFooterTop(374);
             ClientSize = new Size(572, 410);
+        }
+
+        private void SetFooterTop(int top)
+        {
+            foreach (Button button in new[] { storeButton, updatesButton, saveButton, cancelButton })
+                button.Top = top;
         }
 
         private void SetRepairBusy(bool busy)
@@ -563,6 +656,8 @@ internal static class ChatGPTApiOnly
             modelTextBox.Enabled = !busy;
             reasoningComboBox.Enabled = !busy;
             repairButton.Enabled = !busy;
+            storeButton.Enabled = !busy;
+            updatesButton.Enabled = !busy;
             saveButton.Enabled = !busy;
             cancelButton.Enabled = !busy;
             UseWaitCursor = busy;

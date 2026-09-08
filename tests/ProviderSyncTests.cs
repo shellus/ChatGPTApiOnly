@@ -94,6 +94,52 @@ internal static class ProviderSyncTests
             (fail ? "CREATE TRIGGER fail_update BEFORE UPDATE ON local_thread_catalog BEGIN SELECT RAISE(ABORT, 'example failure'); END;" : ""), false);
     }
 
+    private static void TestClientStore()
+    {
+        int prompts = 0;
+        int opens = 0;
+        Func<DialogResult> accept = delegate { prompts++; return DialogResult.OK; };
+        Func<DialogResult> cancel = delegate { prompts++; return DialogResult.Cancel; };
+        Action open = delegate { opens++; };
+        Check((bool)Call(App, "EnsureClientInstalled", true, accept, open), "Installed client blocked");
+        Check(prompts == 0 && opens == 0, "Installed client triggered installation");
+        Check(!(bool)Call(App, "EnsureClientInstalled", false, cancel, open), "Cancelled installation continued startup");
+        Check(prompts == 1 && opens == 0, "Cancel opened Store");
+        Check(!(bool)Call(App, "EnsureClientInstalled", false, accept, open), "Installation link treated as installed client");
+        Check(prompts == 2 && opens == 1, "Confirmed installation did not open Store");
+
+        Type store = App.GetNestedType("ClientStore", Flags);
+        var links = new List<string>();
+        Action<string> launch = delegate(string uri) { links.Add(uri); };
+        Call(store, "OpenLink", false, launch);
+        Call(store, "OpenLink", true, launch);
+        Check(links.Count == 2 && links[0] == "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS" &&
+            links[1] == "ms-windows-store://downloadsandupdates", "Incorrect Store destinations");
+        foreach (bool updates in new[] { false, true })
+        {
+            links.Clear();
+            Action<string> noStore = delegate(string uri)
+            {
+                links.Add(uri);
+                if (uri.StartsWith("ms-windows-store:")) throw new InvalidOperationException("example unavailable");
+            };
+            Call(store, "OpenLink", updates, noStore);
+            Check(links.Count == 2 && links[1] == "https://apps.microsoft.com/detail/9PLM9XGG6VKS", "Browser fallback missing");
+        }
+        bool failed = false;
+        try
+        {
+            Action<string> unavailable = delegate { throw new InvalidOperationException("example unavailable"); };
+            Call(store, "OpenLink", false, unavailable);
+        }
+        catch (TargetInvocationException exception)
+        {
+            failed = exception.InnerException.Message.Contains("https://apps.microsoft.com/detail/9PLM9XGG6VKS");
+        }
+        Check(failed, "Launch failure did not provide manual URL");
+        Console.WriteLine("PASS: installed/missing client, installation confirm/cancel, Store/update URLs, browser fallback and failure");
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -144,6 +190,7 @@ internal static class ProviderSyncTests
             Call(App.GetNestedType("ConfigStore", Flags), "Save", data);
             Check(File.ReadAllText(path) == original && !Directory.Exists(Path.Combine(fixture, "backups_state")), "Saving triggered repair");
             Console.WriteLine("PASS: saving configuration does not repair history");
+            TestClientStore();
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";
@@ -202,12 +249,14 @@ internal static class ProviderSyncTests
                     {
                         var name = new StringBuilder(80);
                         GetClassName(window, name, name.Capacity);
-                        if (name.ToString() == "#32770") PostMessage(window, 0x0111, new IntPtr(1), IntPtr.Zero);
+                        if (name.ToString() == "#32770") PostMessage(window, 0x0010, IntPtr.Zero, IntPtr.Zero);
                         return true;
                     }, IntPtr.Zero);
                     if (elapsed.Elapsed.TotalSeconds > 20)
                     {
-                        error = "UI repair timed out";
+                        error = String.Format("UI repair timed out: {0} ticks, {1} phases, {2} {3}",
+                            ticks, seen.Count, ((Label)Field(form, "repairProgressCaption")).Text,
+                            ((Label)Field(form, "repairProgressLabel")).Text);
                         formType.GetField("repairInProgress", Flags).SetValue(form, false);
                         form.Close();
                     }
