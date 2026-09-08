@@ -78,6 +78,12 @@ internal static class ChatGPTApiOnly
         Application.Run(new LoadingForm(config));
     }
 
+    private static Icon LoadApplicationIcon()
+    {
+        try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application; }
+        catch { return SystemIcons.Application; }
+    }
+
     private static bool EnsureClientInstalled(IWin32Window owner)
     {
         string packageRoot;
@@ -201,14 +207,7 @@ internal static class ChatGPTApiOnly
             AccessibleDescription = "Shows startup progress. Press Space to configure the custom API.";
             KeyDown += LoadingFormOnKeyDown;
 
-            try
-            {
-                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
-            catch
-            {
-                // Explorer can still use the executable's embedded icon.
-            }
+            Icon = LoadApplicationIcon();
 
             var iconBox = new PictureBox
             {
@@ -442,6 +441,7 @@ internal static class ChatGPTApiOnly
         internal ConfigForm(ConfigData config)
         {
             Text = "\u914d\u7f6e\u81ea\u5b9a\u4e49 API";
+            Icon = LoadApplicationIcon();
             ClientSize = new Size(572, 410);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;

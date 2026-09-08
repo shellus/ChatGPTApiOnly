@@ -1,5 +1,7 @@
 # ChatGPT API Only
 
+<img src="output/imagegen/app-logo.png" alt="ChatGPT API Only 应用图标" width="96" />
+
 桌面版 ChatGPT 启动器，面向使用自定义 API 的 Microsoft Store ChatGPT 桌面应用。
 
 ## 主要功能
@@ -85,6 +87,7 @@ name = "显示名称"
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
   /nologo /target:winexe /platform:anycpu /optimize+ `
+  /win32icon:output\imagegen\app.ico `
   /reference:System.dll /reference:System.Core.dll `
   /reference:System.Drawing.dll /reference:System.Windows.Forms.dll `
   /reference:System.Web.Extensions.dll `
@@ -96,6 +99,7 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
   /define:PROVIDER_SYNC_TEST /target:winexe `
+  /win32icon:output\imagegen\app.ico `
   /reference:System.dll /reference:System.Core.dll `
   /reference:System.Drawing.dll /reference:System.Windows.Forms.dll `
   /reference:System.Web.Extensions.dll `
@@ -111,6 +115,7 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
   /nologo /define:PROVIDER_SYNC_TEST /target:exe /main:ProviderSyncTests `
+  /win32icon:output\imagegen\app.ico `
   /reference:System.dll /reference:System.Core.dll `
   /reference:System.Drawing.dll /reference:System.Windows.Forms.dll `
   /reference:System.Web.Extensions.dll `
@@ -121,6 +126,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
 ```
 
 界面回归测试会短暂打开使用 `example` 配置的测试窗口，自动关闭本测试线程的结果提示框，并把应用窗口截图保存在输出的临时目录。
+
+应用图标源文件为 `output/imagegen/app-logo.png`，ICO 包含 16、20、24、32、40、48、64、96、128、256 像素尺寸，编译时嵌入 EXE。修改源图后，在安装了 Pillow 的 Python 环境中运行 `python scripts/build_icon.py` 重建 `output/imagegen/app.ico`。图标文件无需随正式 EXE 单独分发。
 
 ## 上游与许可证
 
