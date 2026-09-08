@@ -344,7 +344,7 @@ internal static class ChatGPTApiOnly
         private readonly TextBox baseUrlTextBox;
         private readonly TextBox apiKeyTextBox;
         private readonly TextBox modelTextBox;
-        private readonly TextBox reasoningTextBox;
+        private readonly ComboBox reasoningComboBox;
         private readonly ErrorProvider errors;
         private readonly Button saveButton;
         private readonly Button cancelButton;
@@ -398,8 +398,12 @@ internal static class ChatGPTApiOnly
             baseUrlTextBox = AddField("API \u5730\u5740", 146, config.BaseUrl ?? String.Empty, 2);
             apiKeyTextBox = AddField("API Key", 194, config.ApiKey ?? String.Empty, 3);
             modelTextBox = AddField("\u6a21\u578b\u540d", 242, config.Model ?? String.Empty, 4);
-            reasoningTextBox = AddField("\u63a8\u7406\u7ea7\u522b", 290,
-                String.IsNullOrWhiteSpace(config.ReasoningEffort) ? "high" : config.ReasoningEffort, 5);
+            reasoningComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+            reasoningComboBox.Items.AddRange(new object[] { "none", "minimal", "low", "medium", "high", "xhigh" });
+            AddField("\u601d\u8003\u5c42\u7ea7", 290,
+                String.IsNullOrWhiteSpace(config.ReasoningEffort) ? "medium" : config.ReasoningEffort, 5,
+                reasoningComboBox);
+            reasoningComboBox.AccessibleDescription = "\u9ed8\u8ba4 medium\uff08\u4e2d\u7b49\uff09\uff0c\u53ef\u9009\u62e9\u6216\u8f93\u5165\u6a21\u578b\u652f\u6301\u7684\u5c42\u7ea7\u3002";
             TextBox authModeTextBox = AddField("\u8ba4\u8bc1\u6a21\u5f0f", 338, "apikey", 6);
             authModeTextBox.Enabled = false;
             authModeTextBox.BackColor = SystemColors.Control;
@@ -541,7 +545,7 @@ internal static class ChatGPTApiOnly
             baseUrlTextBox.Enabled = !busy;
             apiKeyTextBox.Enabled = !busy;
             modelTextBox.Enabled = !busy;
-            reasoningTextBox.Enabled = !busy;
+            reasoningComboBox.Enabled = !busy;
             repairButton.Enabled = !busy;
             saveButton.Enabled = !busy;
             cancelButton.Enabled = !busy;
@@ -560,23 +564,26 @@ internal static class ChatGPTApiOnly
 
         private TextBox AddField(string labelText, int top, string value, int tabIndex)
         {
+            var textBox = new TextBox();
+            AddField(labelText, top, value, tabIndex, textBox);
+            return textBox;
+        }
+
+        private void AddField(string labelText, int top, string value, int tabIndex, Control field)
+        {
             var label = new Label
             {
                 AutoSize = true,
                 Location = new Point(24, top + 6),
                 Text = labelText
             };
-            var textBox = new TextBox
-            {
-                Location = new Point(150, top),
-                Size = new Size(398, 23),
-                Text = value,
-                TabIndex = tabIndex,
-                AccessibleName = labelText
-            };
+            field.Location = new Point(150, top);
+            field.Size = new Size(398, 23);
+            field.Text = value;
+            field.TabIndex = tabIndex;
+            field.AccessibleName = labelText;
             Controls.Add(label);
-            Controls.Add(textBox);
-            return textBox;
+            Controls.Add(field);
         }
 
         private void SaveButtonOnClick(object sender, EventArgs e)
@@ -592,7 +599,7 @@ internal static class ChatGPTApiOnly
             }
             ValidateRequired(apiKeyTextBox, "\u8bf7\u8f93\u5165 API Key\u3002", ref firstInvalid);
             ValidateRequired(modelTextBox, "\u8bf7\u8f93\u5165\u6a21\u578b\u540d\u3002", ref firstInvalid);
-            ValidateRequired(reasoningTextBox, "\u8bf7\u8f93\u5165\u63a8\u7406\u7ea7\u522b\u3002", ref firstInvalid);
+            ValidateRequired(reasoningComboBox, "\u8bf7\u9009\u62e9\u6216\u8f93\u5165\u601d\u8003\u5c42\u7ea7\u3002", ref firstInvalid);
 
             if (firstInvalid != null)
             {
@@ -608,7 +615,7 @@ internal static class ChatGPTApiOnly
                     BaseUrl = baseUrlTextBox.Text.Trim(),
                     ApiKey = apiKeyTextBox.Text.Trim(),
                     Model = modelTextBox.Text.Trim(),
-                    ReasoningEffort = reasoningTextBox.Text.Trim(),
+                    ReasoningEffort = reasoningComboBox.Text.Trim(),
                     AuthMode = "apikey"
                 };
                 saveButton.Enabled = false;
@@ -631,7 +638,7 @@ internal static class ChatGPTApiOnly
             }
         }
 
-        private void ValidateRequired(TextBox textBox, string message, ref Control firstInvalid)
+        private void ValidateRequired(Control textBox, string message, ref Control firstInvalid)
         {
             if (!String.IsNullOrWhiteSpace(textBox.Text)) return;
             errors.SetError(textBox, message);
