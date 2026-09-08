@@ -476,22 +476,35 @@ internal static class ChatGPTApiOnly
             repairProgressBar.Maximum = 1;
             repairProgressBar.Value = 0;
             repairProgressLabel.Text = "\u6b63\u5728\u7edf\u8ba1\u2026";
+            var progress = new LatestProviderSyncProgress();
+            ProviderSyncProgress displayedProgress = null;
+            var progressTimer = new Timer { Interval = 100 };
+            progressTimer.Tick += delegate
+            {
+                ProviderSyncProgress value = progress.Latest;
+                if (value == null || Object.ReferenceEquals(value, displayedProgress)) return;
+                displayedProgress = value;
+                repairProgressCaption.Text = value.Phase;
+                int maximum = Math.Max(1, value.Total);
+                if (repairProgressBar.Value > maximum) repairProgressBar.Value = 0;
+                repairProgressBar.Maximum = maximum;
+                repairProgressBar.Value = Math.Min(repairProgressBar.Maximum, value.Completed);
+                repairProgressLabel.Text = String.Format("{0}/{1}", value.Completed, value.Total);
+            };
+            progressTimer.Start();
+            Refresh();
 
             try
             {
-                var progress = new Progress<ProviderSyncProgress>(delegate(ProviderSyncProgress value)
-                {
-                    int maximum = Math.Max(1, value.Total);
-                    repairProgressBar.Maximum = maximum;
-                    repairProgressBar.Value = Math.Min(maximum, Math.Max(0, value.Completed));
-                    repairProgressLabel.Text = String.Format("{0}/{1}", value.Completed, value.Total);
-                });
                 ProviderSyncResult result = await Task.Run(delegate
                 {
                     return ProviderSynchronizer.Synchronize(
                         ConfigStore.ConfigDirectory, "custom", progress);
                 });
 
+                progressTimer.Stop();
+                repairProgressCaption.Text = "\u4fee\u590d\u5b8c\u6210";
+                repairProgressBar.Value = 0;
                 repairProgressBar.Maximum = Math.Max(1, result.Total);
                 repairProgressBar.Value = repairProgressBar.Maximum;
                 repairProgressLabel.Text = String.Format("{0}/{1}", result.Total, result.Total);
@@ -503,6 +516,7 @@ internal static class ChatGPTApiOnly
             }
             catch (Exception exception)
             {
+                progressTimer.Stop();
                 repairProgressLabel.Text = "\u4fee\u590d\u5931\u8d25";
                 MessageBox.Show(this,
                     "\u65e0\u6cd5\u4fee\u590d\u5bf9\u8bdd\uff1a" + Environment.NewLine + exception.Message,
@@ -510,6 +524,7 @@ internal static class ChatGPTApiOnly
             }
             finally
             {
+                progressTimer.Dispose();
                 SetRepairBusy(false);
                 HideRepairProgress();
             }
@@ -517,6 +532,7 @@ internal static class ChatGPTApiOnly
 
         private void ShowRepairProgress()
         {
+            repairProgressCaption.Text = "\u626b\u63cf\u5bf9\u8bdd";
             saveButton.Location = new Point(368, 414);
             cancelButton.Location = new Point(486, 414);
             ClientSize = new Size(572, 450);
@@ -914,8 +930,7 @@ internal static class ChatGPTApiOnly
         private sealed class RolloutChange
         {
             internal string Path;
-            internal string OriginalText;
-            internal string UpdatedText;
+            internal string BackupPath;
             internal DateTime LastWriteTimeUtc;
         }
 
@@ -927,26 +942,31 @@ internal static class ChatGPTApiOnly
                 throw new InvalidOperationException("\u5bf9\u8bdd\u63d0\u4f9b\u8005 ID \u65e0\u6548\u3002");
 
             Directory.CreateDirectory(codexHome);
-            List<RolloutChange> rolloutChanges = CollectRolloutChanges(codexHome, targetProvider);
+            List<RolloutChange> rolloutChanges = CollectRolloutChanges(codexHome, targetProvider, progress);
+            ReportProgress(progress, 0, 0, "\u7edf\u8ba1\u6570\u636e\u5e93");
             List<string> databasePaths = FindDatabasePaths(codexHome);
             int databaseUpdateCount = 0;
-            foreach (string databasePath in databasePaths)
-                databaseUpdateCount += CountDatabaseUpdates(databasePath, targetProvider);
+            for (int index = 0; index < databasePaths.Count; index++)
+            {
+                databaseUpdateCount += CountDatabaseUpdates(databasePaths[index], targetProvider);
+                ReportProgress(progress, index + 1, databasePaths.Count, "\u7edf\u8ba1\u6570\u636e\u5e93");
+            }
             int total = rolloutChanges.Count + databaseUpdateCount;
             ReportProgress(progress, 0, total);
             if (total == 0) return new ProviderSyncResult(0);
 
-            string backupDirectory = CreateBackup(codexHome, targetProvider, rolloutChanges, databasePaths);
+            string backupDirectory = CreateBackup(codexHome, targetProvider, rolloutChanges, databasePaths, progress);
             var appliedRollouts = new List<RolloutChange>();
             int completed = 0;
 
             try
             {
+                ReportProgress(progress, 0, total);
                 foreach (RolloutChange change in rolloutChanges)
                 {
-                    File.WriteAllText(change.Path, change.UpdatedText, new UTF8Encoding(false));
-                    File.SetLastWriteTimeUtc(change.Path, change.LastWriteTimeUtc);
                     appliedRollouts.Add(change);
+                    RewriteRolloutFile(change.Path, targetProvider);
+                    File.SetLastWriteTimeUtc(change.Path, change.LastWriteTimeUtc);
                     completed++;
                     ReportProgress(progress, completed, total);
                 }
@@ -964,7 +984,7 @@ internal static class ChatGPTApiOnly
                 {
                     try
                     {
-                        File.WriteAllText(change.Path, change.OriginalText, new UTF8Encoding(false));
+                        File.Copy(change.BackupPath, change.Path, true);
                         File.SetLastWriteTimeUtc(change.Path, change.LastWriteTimeUtc);
                     }
                     catch { }
@@ -976,9 +996,9 @@ internal static class ChatGPTApiOnly
         }
 
         private static void ReportProgress(IProgress<ProviderSyncProgress> progress,
-            int completed, int total)
+            int completed, int total, string phase = "\u4fee\u590d\u5bf9\u8bdd")
         {
-            if (progress != null) progress.Report(new ProviderSyncProgress(completed, total));
+            if (progress != null) progress.Report(new ProviderSyncProgress(completed, total, phase));
 #if PROVIDER_SYNC_TEST
             int delayMilliseconds;
             if (Int32.TryParse(
@@ -990,32 +1010,82 @@ internal static class ChatGPTApiOnly
 #endif
         }
 
-        private static List<RolloutChange> CollectRolloutChanges(string codexHome, string targetProvider)
+        private static List<RolloutChange> CollectRolloutChanges(string codexHome, string targetProvider,
+            IProgress<ProviderSyncProgress> progress)
         {
             var changes = new List<RolloutChange>();
+            var paths = new List<string>();
             foreach (string directoryName in new[] { "sessions", "archived_sessions" })
             {
                 string root = Path.Combine(codexHome, directoryName);
                 if (!Directory.Exists(root)) continue;
-                foreach (string path in Directory.GetFiles(root, "*.jsonl", SearchOption.AllDirectories))
+                paths.AddRange(Directory.GetFiles(root, "*.jsonl", SearchOption.AllDirectories));
+            }
+            ReportProgress(progress, 0, paths.Count, "\u626b\u63cf\u5bf9\u8bdd");
+            for (int index = 0; index < paths.Count; index++)
+            {
+                string path = paths[index];
+                foreach (string line in ReadRolloutLines(path))
                 {
-                    string original = File.ReadAllText(path, Encoding.UTF8);
-                    string updated = RewriteSessionMetadata(original, targetProvider);
-                    if (String.Equals(original, updated, StringComparison.Ordinal)) continue;
+                    if (String.Equals(line, RewriteSessionMetadata(line, targetProvider), StringComparison.Ordinal)) continue;
                     changes.Add(new RolloutChange
                     {
                         Path = path,
-                        OriginalText = original,
-                        UpdatedText = updated,
                         LastWriteTimeUtc = File.GetLastWriteTimeUtc(path)
                     });
+                    break;
                 }
+                ReportProgress(progress, index + 1, paths.Count, "\u626b\u63cf\u5bf9\u8bdd");
             }
             return changes;
         }
 
+        private static IEnumerable<string> ReadRolloutLines(string path)
+        {
+            using (var reader = new StreamReader(path, Encoding.UTF8))
+            {
+                var buffer = new char[8192];
+                var line = new StringBuilder();
+                int count;
+                while ((count = reader.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    int start = 0;
+                    for (int index = 0; index < count; index++)
+                    {
+                        if (buffer[index] != '\n') continue;
+                        line.Append(buffer, start, index - start + 1);
+                        yield return line.ToString();
+                        line.Clear();
+                        start = index + 1;
+                    }
+                    line.Append(buffer, start, count - start);
+                }
+                if (line.Length > 0) yield return line.ToString();
+            }
+        }
+
+        private static void RewriteRolloutFile(string path, string targetProvider)
+        {
+            string temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (var writer = new StreamWriter(temporary, false, new UTF8Encoding(false)))
+                {
+                    foreach (string line in ReadRolloutLines(path))
+                        writer.Write(RewriteSessionMetadata(line, targetProvider));
+                }
+                File.Replace(temporary, path, null);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+        }
+
         private static string RewriteSessionMetadata(string text, string targetProvider)
         {
+            if (text.IndexOf(SessionMetaType, StringComparison.Ordinal) < 0 &&
+                text.IndexOf("\\u", StringComparison.Ordinal) < 0) return text;
             var serializer = new JavaScriptSerializer();
             var output = new StringBuilder(text.Length);
             int position = 0;
@@ -1102,8 +1172,12 @@ internal static class ChatGPTApiOnly
         }
 
         private static string CreateBackup(string codexHome, string targetProvider,
-            List<RolloutChange> rolloutChanges, List<string> databasePaths)
+            List<RolloutChange> rolloutChanges, List<string> databasePaths,
+            IProgress<ProviderSyncProgress> progress)
         {
+            int total = rolloutChanges.Count + databasePaths.Count;
+            int completed = 0;
+            ReportProgress(progress, 0, total, "\u5907\u4efd\u5bf9\u8bdd");
             string root = Path.Combine(codexHome, "backups_state", "provider-sync");
             string name = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
             string backup = Path.Combine(root, name);
@@ -1124,6 +1198,7 @@ internal static class ChatGPTApiOnly
                     Directory.CreateDirectory(Path.GetDirectoryName(destination));
                     File.Copy(source, destination);
                 }
+                ReportProgress(progress, ++completed, total, "\u5907\u4efd\u5bf9\u8bdd");
             }
 
             foreach (RolloutChange change in rolloutChanges)
@@ -1131,7 +1206,9 @@ internal static class ChatGPTApiOnly
                 string relative = MakeRelativePath(codexHome, change.Path);
                 string destination = Path.Combine(backup, "sessions", relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination));
-                File.WriteAllText(destination, change.OriginalText, new UTF8Encoding(false));
+                File.Copy(change.Path, destination);
+                change.BackupPath = destination;
+                ReportProgress(progress, ++completed, total, "\u5907\u4efd\u5bf9\u8bdd");
             }
 
             var metadata = new Dictionary<string, object>();
@@ -1307,14 +1384,23 @@ internal static class ChatGPTApiOnly
 
     private sealed class ProviderSyncProgress
     {
-        internal ProviderSyncProgress(int completed, int total)
+        internal ProviderSyncProgress(int completed, int total, string phase)
         {
             Completed = completed;
             Total = total;
+            Phase = phase;
         }
 
         internal int Completed { get; private set; }
         internal int Total { get; private set; }
+        internal string Phase { get; private set; }
+    }
+
+    private sealed class LatestProviderSyncProgress : IProgress<ProviderSyncProgress>
+    {
+        private volatile ProviderSyncProgress latest;
+        internal ProviderSyncProgress Latest { get { return latest; } }
+        public void Report(ProviderSyncProgress value) { latest = value; }
     }
 
     private sealed class ProviderSyncResult

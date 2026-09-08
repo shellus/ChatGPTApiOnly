@@ -55,6 +55,8 @@ name = "显示名称"
 
 表单中的“提供者名称”对应 `name`，不是 provider ID。“修复对话”按钮会显式地将历史对话元数据同步为 provider ID `custom`，不能把显示名称写入历史数据库。保存配置不会隐式修复对话。修复期间临时显示真实的 `n/total` 进度，完成或失败提示关闭后隐藏进度区。
 
+进度按扫描对话、统计数据库、备份、修复分别计数，每个阶段重新计算 `n/total`。扫描与修复逐行处理 rollout，备份直接复制文件；后台只保留最新进度，界面每 100 毫秒读取一次，避免大量历史对话占满内存或积压界面消息。
+
 同步范围与 Codex++ 的 Provider metadata sync 保持兼容：
 
 - `sessions` 与 `archived_sessions` 中 rollout JSONL 的 `session_meta.payload.model_provider`；
@@ -87,6 +89,22 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 ```
 
 测试必须通过 `CHATGPT_API_ONLY_CONFIG_DIR` 指向隔离 fixture，禁止对真实 Codex 目录运行测试入口。
+
+自动回归测试会自行创建临时 fixture 并设置上述环境变量，覆盖成功更新、无变更幂等、数据库失败回滚、备份、保存配置不触发同步、大量历史对话内存占用，以及修复期间的界面响应和分阶段进度：
+
+```powershell
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
+  /nologo /define:PROVIDER_SYNC_TEST /target:exe /main:ProviderSyncTests `
+  /reference:System.dll /reference:System.Core.dll `
+  /reference:System.Drawing.dll /reference:System.Windows.Forms.dll `
+  /reference:System.Web.Extensions.dll `
+  /out:ChatGPTApiOnly.test.exe ChatGPTApiOnly.cs tests\ProviderSyncTests.cs
+if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
+& .\ChatGPTApiOnly.test.exe
+if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
+```
+
+界面回归测试会短暂打开使用 `example` 配置的测试窗口，自动关闭本测试线程的结果提示框，并把应用窗口截图保存在输出的临时目录。
 
 ## 上游与许可证
 
