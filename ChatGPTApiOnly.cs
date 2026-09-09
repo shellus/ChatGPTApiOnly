@@ -471,14 +471,14 @@ internal static class ChatGPTApiOnly
             var heading = new Label
             {
                 AutoSize = true,
-                Location = new Point(24, 20),
+                Location = new Point(24, 16),
                 Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold, GraphicsUnit.Point),
                 Text = "\u914d\u7f6e\u81ea\u5b9a\u4e49 API"
             };
             var intro = new Label
             {
-                Location = new Point(24, 51),
-                Size = new Size(520, 38),
+                Location = new Point(24, 44),
+                Size = new Size(520, 22),
                 ForeColor = SystemColors.GrayText,
                 Text = "\u4fdd\u5b58\u540e\u5c06\u7ee7\u7eed\u542f\u52a8 ChatGPT\u3002\u914d\u7f6e\u4fdd\u5b58\u5728\u7528\u6237\u76ee\u5f55\u7684 .codex \u6587\u4ef6\u5939\u3002"
             };
