@@ -53,7 +53,9 @@
 - **官方账号**：使用内置 `openai` provider，直接连接官方服务，沿用官方 OAuth 凭证。点击“登录 / 切换账号”应用官方模式并打开客户端，由客户端完成登录；已有账号需要在客户端账号菜单退出后重新登录。启动器不自行实现 OAuth，也不验证账号权益。
 - **自定义 API**：使用 `custom` provider 和 API Key，保留已有 API 配置及默认中等（`medium`）的思考层级。OAuth 令牌不会写入此模式的活动认证文件。
 - 模式切换保留另一个模式的配置；切走官方模式时保存客户端最新刷新后的凭证。官方客户端退出登录后，不恢复旧凭证。首次切入官方模式不沿用自定义模型名，由官方客户端选择默认模型；之后保留官方模式自身的模型设置。
-- 如果发现官方凭证但路由仍为 `custom`，默认展示官方 Tab，等待“应用并启动”后才改为官方路由。保存时使用 `forced_login_method` 明确认证方式，并使用文件凭证存储，确保与 `auth.json` 一致。
+- 如果发现官方凭证但路由仍为 `custom`，默认展示官方 Tab，等待“应用并启动”后才改为官方路由。认证方式由 `auth.json` 的 `auth_mode` 与对应凭据决定，请求路由由 `model_provider` 决定。
+- 应用模式时移除旧版启动器写入的 `forced_login_method` 限制，不再写入该字段。`cli_auth_credentials_store` 默认不写，已有 `file` 配置及注释原样保留；若显式使用 `keyring`、`auto`、`ephemeral` 等其他存储方式，提示兼容冲突并阻止切换。
+- 不再删除 `profile`、`chatgpt_base_url`、`openai_base_url` 或 `[model_providers.openai]`。选中了 `profile` 时阻止两种模式的切换；切到官方模式时，发现显式路由覆盖字段或自定义 `openai` provider 也会提示冲突。冲突检查在停止客户端及写入文件之前完成，保留现有配置供手动核对。
 - “修复对话”仅位于自定义 API Tab，显式把历史数据关联到 `custom`；模式切换不会迁移历史对话，两个 provider 的历史可见范围可能不同。
 
 登录方式和凭证存储配置以 [Codex 官方配置 schema](https://github.com/openai/codex/blob/main/codex-rs/core/config.schema.json) 为依据。
@@ -128,6 +130,8 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 同一测试入口还覆盖客户端安装检测分支、确认和取消安装、商店和更新 URI、浏览器回退与双重失败提示；这些测试使用替代启动动作，不实际安装或更新客户端。
 
 OAuth 回归使用虚构的 `example` 凭证，覆盖混合登录状态、双向切换、刷新后凭证保留、官方启动参数、Tab 不落盘、多文件保存失败恢复、退出登录不恢复旧凭证，以及切换不修改历史数据。
+
+模式配置回归还覆盖旧版登录限制清理、已有文件存储设置保留，以及路由或凭据存储冲突时三个配置文件均不被改写。
 
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `

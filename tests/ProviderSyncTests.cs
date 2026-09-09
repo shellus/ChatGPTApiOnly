@@ -158,7 +158,7 @@ internal static class ProviderSyncTests
         Call(store, "SaveOfficial");
         string officialConfig = File.ReadAllText(configPath);
         Check(officialConfig.Contains("model_provider = \"openai\"") &&
-            officialConfig.Contains("forced_login_method = \"chatgpt\"") &&
+            !officialConfig.Contains("forced_login_method") && !officialConfig.Contains("cli_auth_credentials_store") &&
             !officialConfig.Contains("model = \"example\""), "Official route or model defaults incorrect");
         Check(File.ReadAllText(authPath) == officialAuth, "Official credentials changed");
         object official = Call(store, "Load");
@@ -225,11 +225,59 @@ internal static class ProviderSyncTests
         Call(store, "SaveOfficial");
         Check(!File.ReadAllText(authPath).Contains("example-access"), "Logout resurrected old token");
         Check(!(bool)Property(Call(store, "Load"), "IsValid"), "Missing official tokens reported valid");
+        TestModeConflicts(root, customData, officialAuth);
         UseFixture(root, "oauth-first-run");
         Call(store, "SaveOfficial");
         Check((bool)Field(Call(store, "Load"), "OfficialMode") && !(bool)Property(Call(store, "Load"), "IsValid"),
             "First official launch should wait for client login");
         Console.WriteLine("PASS: mixed state, OAuth/custom switching, refreshed credentials, startup arguments, read-only tabs, rollback, logout, history preserved");
+    }
+
+    private static void TestModeConflicts(string root, object customData, string officialAuth)
+    {
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        UseFixture(root, "mode-conflicts");
+        Call(store, "Save", customData);
+        string config = Path.Combine(fixture, "config.toml");
+        string auth = Path.Combine(fixture, "auth.json");
+        string profiles = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string baseline = File.ReadAllText(config);
+        File.WriteAllText(auth, officialAuth, Utf8);
+        foreach (bool official in new[] { false, true })
+        {
+            foreach (string entry in new[] {
+                "profile = \"example\"\n", "cli_auth_credentials_store = \"keyring\"\n",
+                "cli_auth_credentials_store = \"auto\"\n", "cli_auth_credentials_store = \"ephemeral\"\n",
+                "chatgpt_base_url = \"https://example.com\"\n", "openai_base_url = \"https://example.com/v1\"\n",
+                "[model_providers.openai]\nbase_url = \"https://example.com/v1\"\n",
+                "[model_providers.\"openai\"] # example\nbase_url = \"https://example.com/v1\"\n" })
+            {
+                bool routingOnly = entry.StartsWith("chatgpt_base_url") || entry.StartsWith("openai_base_url") || entry.StartsWith("[");
+                if (!official && routingOnly) continue;
+                string content = entry.StartsWith("[") ? baseline + "\n" + entry : entry + baseline;
+                File.WriteAllText(config, content, Utf8);
+                string beforeAuth = File.ReadAllText(auth);
+                string beforeProfiles = File.ReadAllText(profiles);
+                bool rejected = false;
+                try { if (official) Call(store, "SaveOfficial"); else Call(store, "Save", customData); }
+                catch (TargetInvocationException exception) { rejected = exception.InnerException.Message.Contains("config.toml"); }
+                Check(rejected && File.ReadAllText(config) == content && File.ReadAllText(auth) == beforeAuth &&
+                    File.ReadAllText(profiles) == beforeProfiles, "Conflict changed files: " + entry);
+                Check(!(bool)Property(Call(store, "Load"), "IsValid"), "Conflict accepted on startup");
+            }
+        }
+        foreach (bool official in new[] { false, true })
+        {
+            File.WriteAllText(config, "forced_login_method = \"api\"\ncli_auth_credentials_store = \"file\" # example keep\n" + baseline, Utf8);
+            if (official) Call(store, "SaveOfficial"); else Call(store, "Save", customData);
+            string updated = File.ReadAllText(config);
+            Check(!updated.Contains("forced_login_method") && updated.Contains("cli_auth_credentials_store = \"file\" # example keep"),
+                "Legacy restriction not removed or file storage changed");
+        }
+        File.WriteAllText(config, "chatgpt_base_url = \"https://example.com\"\n" + baseline, Utf8);
+        Call(store, "Save", customData);
+        Check(File.ReadAllText(config).Contains("chatgpt_base_url = \"https://example.com\""), "Unrelated routing field deleted");
+        Console.WriteLine("PASS: legacy restriction cleanup, existing file backend preserved, conflicting routing/storage rejected without file changes");
     }
 
     [STAThread]

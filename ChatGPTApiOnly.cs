@@ -779,6 +779,7 @@ internal static class ChatGPTApiOnly
             {
                 try
                 {
+                    ConfigStore.ValidateModeSwitch(true);
                     string packageRoot;
                     FindLatestChatGptExecutable(out packageRoot);
                     StopPackagedChatGptProcesses(packageRoot, true);
@@ -826,6 +827,7 @@ internal static class ChatGPTApiOnly
                 UseWaitCursor = true;
                 Refresh();
 
+                ConfigStore.ValidateModeSwitch(false);
                 string packageRoot;
                 FindLatestChatGptExecutable(out packageRoot);
                 StopPackagedChatGptProcesses(packageRoot, true);
@@ -878,7 +880,7 @@ internal static class ChatGPTApiOnly
             {
                 if (!String.IsNullOrEmpty(ProfileError)) return false;
                 if (!String.IsNullOrEmpty(CredentialsStore) && CredentialsStore != "file") return false;
-                if (!String.IsNullOrEmpty(ForcedLoginMethod) && ForcedLoginMethod != (OfficialMode ? "chatgpt" : "api")) return false;
+                if (!String.IsNullOrEmpty(ForcedLoginMethod)) return false;
                 if (OfficialMode) return ConfigReadable && AuthReadable && AuthMode == "chatgpt" && ActiveOfficialCredentials;
                 bool authModeValid = !AuthModePresent ||
                     String.Equals(AuthMode, "apikey", StringComparison.OrdinalIgnoreCase);
@@ -954,6 +956,7 @@ internal static class ChatGPTApiOnly
 
         internal static void Save(ConfigData data)
         {
+            ValidateModeSwitch(false);
             Dictionary<string, object> profiles = CaptureProfiles();
             string existingToml = ReadText(ConfigPath) ?? String.Empty;
             string updatedToml = UpdateToml(existingToml, data);
@@ -1024,28 +1027,17 @@ internal static class ChatGPTApiOnly
 
         internal static void SaveOfficial()
         {
+            ValidateModeSwitch(true);
             var profiles = CaptureProfiles();
             var lines = new List<string>(Regex.Split(ReadText(ConfigPath) ?? String.Empty, "\\r?\\n"));
             SetTopLevel(lines, "model_provider", QuoteToml("openai"));
-            RemoveTopLevel(lines, "profile");
-            RemoveTopLevel(lines, "chatgpt_base_url");
-            RemoveTopLevel(lines, "openai_base_url");
+            RemoveTopLevel(lines, "forced_login_method");
             RemoveTopLevel(lines, "model");
             RemoveTopLevel(lines, "model_reasoning_effort");
             string model = ProfileString(profiles, "official_model");
             string effort = ProfileString(profiles, "official_effort");
             if (!String.IsNullOrWhiteSpace(model)) SetTopLevel(lines, "model", QuoteToml(model));
             SetTopLevel(lines, "model_reasoning_effort", QuoteToml(String.IsNullOrWhiteSpace(effort) ? "medium" : effort));
-            SetTopLevel(lines, "forced_login_method", QuoteToml("chatgpt"));
-            SetTopLevel(lines, "cli_auth_credentials_store", QuoteToml("file"));
-            // A user-defined openai provider could redirect OAuth traffic to a custom server.
-            int section = lines.FindIndex(delegate(string line) { return line.Trim() == "[model_providers.openai]"; });
-            if (section >= 0)
-            {
-                int end = section + 1;
-                while (end < lines.Count && !lines[end].TrimStart().StartsWith("[")) end++;
-                lines.RemoveRange(section, end - section);
-            }
             string auth = ProfileString(profiles, "official_auth");
             if (String.IsNullOrWhiteSpace(auth)) auth = "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null}";
             var officialAuth = ParseObject(auth);
@@ -1057,6 +1049,42 @@ internal static class ChatGPTApiOnly
                 auth = new JavaScriptSerializer().Serialize(officialAuth);
             }
             CommitMode(String.Join(Environment.NewLine, lines.ToArray()), auth, profiles);
+        }
+
+        internal static void ValidateModeSwitch(bool official)
+        {
+            string conflict = GetModeConflict(ReadText(ConfigPath) ?? String.Empty, official);
+            if (conflict != null)
+                throw new InvalidOperationException("\u914d\u7f6e\u51b2\u7a81\uff1a" + conflict +
+                    "\u3002\u8bf7\u5148\u6838\u5bf9 config.toml\uff1b\u672a\u4fee\u6539\u914d\u7f6e\u6216\u51ed\u8bc1\u3002");
+        }
+
+        private static string GetModeConflict(string toml, bool official)
+        {
+            bool topLevel = true;
+            foreach (string raw in Regex.Split(toml, "\\r?\\n"))
+            {
+                string line = StripTomlComment(raw).Trim();
+                if (line.StartsWith("["))
+                {
+                    topLevel = false;
+                    string section = Regex.Replace(line, "[\\s\"']", String.Empty);
+                    if (official && (section == "[model_providers.openai]" || section.StartsWith("[model_providers.openai.")))
+                        return "[model_providers.openai] \u53ef\u80fd\u8986\u76d6\u5b98\u65b9\u8def\u7531";
+                    continue;
+                }
+                if (!topLevel) continue;
+                int equals = FindUnquotedEquals(line);
+                if (equals < 1) continue;
+                string key = line.Substring(0, equals).Trim().Trim('"', '\'');
+                string value = line.Substring(equals + 1).Trim();
+                if (key == "cli_auth_credentials_store" && value != "\"file\"" && value != "'file'")
+                    return "cli_auth_credentials_store \u4e0d\u662f file\uff0c\u65e0\u6cd5\u4ec5\u901a\u8fc7 auth.json \u5207\u6362\u51ed\u636e";
+                if (key == "profile" || (official && (key == "chatgpt_base_url" || key == "openai_base_url" ||
+                    key == "model_providers" || key.StartsWith("model_providers.openai."))))
+                    return key + " \u53ef\u80fd\u8986\u76d6\u76ee\u6807\u8def\u7531";
+            }
+            return null;
         }
 
         private static void CommitMode(string toml, string auth, Dictionary<string, object> profiles)
@@ -1136,10 +1164,10 @@ internal static class ChatGPTApiOnly
                     }
                 }
                 string all = File.ReadAllText(ConfigPath, Encoding.UTF8);
+                if (GetModeConflict(all, data.OfficialMode) != null) { data.ConfigReadable = false; return; }
                 if (data.OfficialMode)
                 {
-                    data.ConfigReadable = !Regex.IsMatch(all, "(?m)^\\s*(profile|chatgpt_base_url|openai_base_url)\\s*=") &&
-                        !all.Contains("[model_providers.openai]");
+                    data.ConfigReadable = true;
                     return;
                 }
                 data.ConfigReadable = Regex.IsMatch(all, "(?m)^\\s*model_provider\\s*=\\s*\"custom\"\\s*(?:#.*)?$") &&
@@ -1175,9 +1203,7 @@ internal static class ChatGPTApiOnly
         {
             var lines = new List<string>(Regex.Split(existing, "\\r?\\n"));
             SetTopLevel(lines, "model_provider", QuoteToml("custom"));
-            RemoveTopLevel(lines, "profile");
-            SetTopLevel(lines, "forced_login_method", QuoteToml("api"));
-            SetTopLevel(lines, "cli_auth_credentials_store", QuoteToml("file"));
+            RemoveTopLevel(lines, "forced_login_method");
             SetTopLevel(lines, "model", QuoteToml(data.Model));
             SetTopLevel(lines, "model_reasoning_effort", QuoteToml(data.ReasoningEffort));
             SetSectionValue(lines, "model_providers.custom", "name", QuoteToml(data.ProviderName));
