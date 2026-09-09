@@ -61,6 +61,25 @@
 
 登录方式和凭证存储配置以 [Codex 官方配置 schema](https://github.com/openai/codex/blob/main/codex-rs/core/config.schema.json) 为依据。
 
+## 官方账号独立代理
+
+官方账号 Tab 中的“HTTP 代理”接受 `http://主机:端口`，点击“应用并启动”后生效；留空不设置独立代理。代理软件须保持监听，系统代理和 TUN 可以关闭。自定义 API 模式不应用这项设置。
+
+地址仅保存在 `launcher-profiles/modes.json` 的 `official_proxy_url`，不写入 Codex 的 `config.toml`、`auth.json` 或 Windows 系统代理。启动器为官方客户端设置：
+
+- `--proxy-server`：覆盖 Electron 的 HTTP、HTTPS 和 WebSocket 网络路径。
+- `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`：供内置 Codex 后端和支持这些变量的子进程使用。
+- `NO_PROXY=localhost,127.0.0.1,::1`：本机通信直连。
+- `NODE_USE_ENV_PROXY=1`：让支持该选项的 Node 辅助进程使用环境代理。
+
+这些环境变量只写入新客户端进程的启动环境，不修改启动器、其他已运行应用或用户级环境变量。客户端发起的工具子进程也会继承；自行清理环境的工具或 WSL/远程主机不保证生效。浏览器中的外部登录页面、Microsoft Store 是独立应用，不由这些启动参数控制。
+
+客户端已在后台运行时，重复启动由官方单实例机制处理，新参数不会改写旧进程环境；修改代理后应使用“应用并启动”重新启动客户端。代理地址不支持账号密码或 URL 路径。
+
+Windows 原生客户端实测中，HTTP 参数与代理环境变量组合、SOCKS5 组合、PAC 与环境变量组合均完成了官方模型对话；仅 Electron 参数或仅环境变量未能完成整个启动流程。Node 辅助进程单独验证了 `NODE_USE_ENV_PROXY` 的必要性。启动器采用 HTTP 组合，避免 PAC 服务依赖及 Node SOCKS 支持差异。偶发重连不作为代理失败依据，应结合完整回复、代理连接记录和服务端错误判断。
+
+实现依据：[Electron 代理启动参数](https://www.electronjs.org/docs/latest/api/command-line-switches#--proxy-serveraddressport)、[Node 环境代理](https://nodejs.org/api/cli.html#node_use_env_proxy1)。相关边界见 [Node helper 代理问题](https://github.com/openai/codex/issues/22623) 和 [WSL 环境传递问题](https://github.com/openai/codex/issues/37662)。
+
 ## 安装与更新客户端
 
 - **打开应用商店**：打开 [ChatGPT 官方商店页面](https://apps.microsoft.com/detail/9PLM9XGG6VKS)，在商店中安装或更新客户端。

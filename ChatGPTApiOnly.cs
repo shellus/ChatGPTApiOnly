@@ -97,6 +97,15 @@ internal static class ChatGPTApiOnly
         {
             start.EnvironmentVariables.Remove("OPENAI_API_KEY");
             start.EnvironmentVariables.Remove("OPENAI_BASE_URL");
+            string proxy = ConfigStore.NormalizeOfficialProxyUrl(config.OfficialProxyUrl);
+            if (proxy.Length > 0)
+            {
+                start.Arguments = Quote("--proxy-server=" + proxy);
+                foreach (string name in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" })
+                    start.EnvironmentVariables[name] = proxy;
+                start.EnvironmentVariables["NO_PROXY"] = "localhost,127.0.0.1,::1";
+                start.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "1";
+            }
         }
         return start;
     }
@@ -453,6 +462,7 @@ internal static class ChatGPTApiOnly
         private readonly TabControl modeTabs;
         private readonly TabPage officialTab;
         private readonly TabPage customTab;
+        private readonly TextBox officialProxyTextBox;
 
         internal ConfigForm(ConfigData config)
         {
@@ -598,17 +608,29 @@ internal static class ChatGPTApiOnly
             officialTab.Controls.Add(status);
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 78), Size = new Size(480, 126),
-                Text = "\u4f7f\u7528 ChatGPT \u5b98\u65b9\u8d26\u53f7\u6743\u76ca\uff0c\u76f4\u63a5\u8fde\u63a5 OpenAI\u3002\r\n\r\n" +
-                    "\u767b\u5f55\u3001\u5207\u6362\u8d26\u53f7\u548c\u51ed\u8bc1\u5237\u65b0\u5747\u7531\u5b98\u65b9\u5ba2\u6237\u7aef\u5b8c\u6210\u3002\r\n" +
-                    "\u672c\u5730\u51ed\u8bc1\u5b58\u5728\u4e0d\u4ee3\u8868\u767b\u5f55\u4ecd\u7136\u6709\u6548\u3002\r\n\r\n" +
-                    "\u5207\u6362\u6a21\u5f0f\u4f1a\u4fdd\u7559\u53e6\u4e00\u79cd\u6a21\u5f0f\u7684\u914d\u7f6e\uff0c\u4e0d\u4f1a\u4fee\u6539\u5386\u53f2\u5bf9\u8bdd\u3002"
+                Location = new Point(20, 66), Size = new Size(480, 78),
+                Text = "点击下方“应用并启动”，在官方客户端中登录或切换账号。\r\n" +
+                    "本地凭证存在不代表登录仍然有效。\r\n\r\n" +
+                    "切换模式会保留另一种模式的配置，不会修改历史对话。"
             });
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 230), Size = new Size(480, 54),
-                Text = "\u70b9\u51fb\u4e0b\u65b9\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\uff0c\u5728 ChatGPT \u5ba2\u6237\u7aef\u4e2d\u767b\u5f55\u3002\r\n" +
-                    "\u5207\u6362\u8d26\u53f7\u65f6\uff0c\u5728\u5ba2\u6237\u7aef\u8d26\u53f7\u83dc\u5355\u9000\u51fa\u540e\u91cd\u65b0\u767b\u5f55\u3002"
+                Location = new Point(20, 162), AutoSize = true,
+                Text = "HTTP 代理（可选）"
+            });
+            officialProxyTextBox = new TextBox
+            {
+                Location = new Point(20, 186), Size = new Size(480, 23),
+                Text = config.OfficialProxyUrl ?? String.Empty,
+                AccessibleName = "官方账号 HTTP 代理", TabIndex = 0
+            };
+            officialTab.Controls.Add(officialProxyTextBox);
+            officialTab.Controls.Add(new Label
+            {
+                Location = new Point(20, 222), Size = new Size(480, 66),
+                Text = "地址格式：http://主机:端口；留空不设置独立代理。\r\n" +
+                    "仅作用于官方客户端及其子进程，不修改系统代理。\r\n" +
+                    "本地代理软件需保持运行。"
             });
             Text = heading.Text = "ChatGPT \u8fde\u63a5\u8bbe\u7f6e";
             intro.Text = "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f\uff0c\u70b9\u51fb\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\u540e\u751f\u6548\u3002";
@@ -774,11 +796,12 @@ internal static class ChatGPTApiOnly
             {
                 try
                 {
+                    string proxy = ConfigStore.NormalizeOfficialProxyUrl(officialProxyTextBox.Text);
                     ConfigStore.ValidateModeSwitch(true);
                     string packageRoot;
                     FindLatestChatGptExecutable(out packageRoot);
                     StopPackagedChatGptProcesses(packageRoot, true);
-                    ConfigStore.SaveOfficial();
+                    ConfigStore.SaveOfficial(proxy);
                     DialogResult = DialogResult.OK;
                     Close();
                 }
@@ -866,6 +889,7 @@ internal static class ChatGPTApiOnly
         internal bool ActiveOfficialCredentials;
         internal string CredentialsStore;
         internal string ProfileError;
+        internal string OfficialProxyUrl;
 
         internal bool IsValid
         {
@@ -873,7 +897,12 @@ internal static class ChatGPTApiOnly
             {
                 if (!String.IsNullOrEmpty(ProfileError)) return false;
                 if (!String.IsNullOrEmpty(CredentialsStore) && CredentialsStore != "file") return false;
-                if (OfficialMode) return ConfigReadable && AuthReadable && AuthMode == "chatgpt" && ActiveOfficialCredentials;
+                if (OfficialMode)
+                {
+                    try { ConfigStore.NormalizeOfficialProxyUrl(OfficialProxyUrl); }
+                    catch { return false; }
+                    return ConfigReadable && AuthReadable && AuthMode == "chatgpt" && ActiveOfficialCredentials;
+                }
                 bool authModeValid = String.Equals(AuthMode, "apikey", StringComparison.OrdinalIgnoreCase);
                 return ConfigReadable && AuthReadable &&
                     !String.IsNullOrWhiteSpace(ProviderName) &&
@@ -914,6 +943,7 @@ internal static class ChatGPTApiOnly
             Dictionary<string, object> profiles;
             try { profiles = ReadObject(ProfilesPath); }
             catch (Exception exception) { data.ProfileError = exception.Message; return data; }
+            data.OfficialProxyUrl = ProfileString(profiles, "official_proxy_url");
             if (data.OfficialMode)
             {
                 string savedProviders = ProfileString(profiles, "model_providers_toml");
@@ -953,6 +983,18 @@ internal static class ChatGPTApiOnly
                 String.IsNullOrWhiteSpace(uri.Host) || !String.IsNullOrEmpty(uri.Query) ||
                 !String.IsNullOrEmpty(uri.Fragment)) return false;
             return uri.AbsolutePath.EndsWith("/v1", StringComparison.Ordinal);
+        }
+
+        internal static string NormalizeOfficialProxyUrl(string value)
+        {
+            if (String.IsNullOrWhiteSpace(value)) return String.Empty;
+            Uri uri;
+            if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttp ||
+                String.IsNullOrEmpty(uri.Host) || uri.Port < 1 ||
+                !String.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/" ||
+                !String.IsNullOrEmpty(uri.Query) || !String.IsNullOrEmpty(uri.Fragment))
+                throw new InvalidOperationException("代理地址须为 http://主机:端口，不包含账号密码、路径或查询参数。");
+            return uri.GetLeftPart(UriPartial.Authority);
         }
 
         internal static void Save(ConfigData data)
@@ -1041,10 +1083,12 @@ internal static class ChatGPTApiOnly
             return profiles;
         }
 
-        internal static void SaveOfficial()
+        internal static void SaveOfficial(string proxyUrl)
         {
+            string proxy = NormalizeOfficialProxyUrl(proxyUrl);
             ValidateModeSwitch(true);
             var profiles = CaptureProfiles();
+            profiles["official_proxy_url"] = proxy;
             string providers;
             string cleanToml = SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
             var lines = new List<string>(Regex.Split(cleanToml, "\\r?\\n"));

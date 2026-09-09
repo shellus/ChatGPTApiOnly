@@ -13,6 +13,7 @@
 - 表单中的“提供者名称”只对应 `[model_providers.custom].name`，不得作为 provider ID 写入历史数据。
 - 模式切换更新 `config.toml`、`auth.json` 与本机 `launcher-profiles/modes.json`；切换 Tab 不落盘，保存或切换模式不得隐式修复历史对话。
 - 官方模式由官方客户端登录及刷新 OAuth 凭证，启动时不得携带域名阻断或自定义 API 环境变量。仅凭本地凭证存在不得声称账号有效。
+- 官方独立代理只保存于模式文件并注入客户端启动参数和子进程环境；不得修改 Windows 系统代理、用户环境变量或其他模式的网络配置。回归覆盖代理地址校验、父进程环境不变、禁用、模式保留及保存失败回滚。
 - 切换前保留当前凭证及各模式模型设置，官方退出登录后不得恢复旧令牌。多文件保存失败必须尝试恢复原状态并阻止启动。
 - 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
 - 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`，从活动配置移除；自定义模式恢复片段后更新表单字段。保留未知字段、其他提供者及嵌套表，重复保存不得清空快照。

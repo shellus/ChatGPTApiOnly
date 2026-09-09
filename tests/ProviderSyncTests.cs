@@ -155,7 +155,7 @@ internal static class ProviderSyncTests
         object mixed = Call(store, "Load");
         Check(!(bool)Field(mixed, "OfficialMode") && (bool)Field(mixed, "HasOfficialCredentials") &&
             !(bool)Property(mixed, "IsValid"), "Mixed OAuth/custom state was silently accepted");
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         string officialConfig = File.ReadAllText(configPath);
         Check(officialConfig.Contains("model_provider = \"openai\"") &&
             !officialConfig.Contains("forced_login_method") && !officialConfig.Contains("cli_auth_credentials_store") &&
@@ -176,7 +176,7 @@ internal static class ProviderSyncTests
         Check((bool)Property(custom, "IsValid"), "Custom mode not restored");
         start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", custom);
         Check(start.Arguments.Contains("host-resolver-rules"), "Custom startup acceleration lost");
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         Check(File.ReadAllText(authPath) == refreshed, "Latest refreshed credentials not restored");
         Check(File.ReadAllText(configPath).Contains("model = \"example-official\""), "Official model setting not retained");
         Check((string)Field(Call(store, "Load"), "ApiKey") == "example", "Saved API key missing from custom form");
@@ -222,12 +222,12 @@ internal static class ProviderSyncTests
         // A logout must not resurrect the saved official session.
         File.Delete(authPath);
         Call(store, "Save", customData);
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         Check(!File.ReadAllText(authPath).Contains("example-access"), "Logout resurrected old token");
         Check(!(bool)Property(Call(store, "Load"), "IsValid"), "Missing official tokens reported valid");
         TestModeConflicts(root, customData, officialAuth);
         UseFixture(root, "oauth-first-run");
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         Check((bool)Field(Call(store, "Load"), "OfficialMode") && !(bool)Property(Call(store, "Load"), "IsValid"),
             "First official launch should wait for client login");
         Console.WriteLine("PASS: mixed state, OAuth/custom switching, refreshed credentials, startup arguments, read-only tabs, rollback, logout, history preserved");
@@ -258,7 +258,7 @@ internal static class ProviderSyncTests
                 string beforeAuth = File.ReadAllText(auth);
                 string beforeProfiles = File.ReadAllText(profiles);
                 bool rejected = false;
-                try { if (official) Call(store, "SaveOfficial"); else Call(store, "Save", customData); }
+                try { if (official) Call(store, "SaveOfficial", String.Empty); else Call(store, "Save", customData); }
                 catch (TargetInvocationException exception) { rejected = exception.InnerException.Message.Contains("config.toml"); }
                 Check(rejected && File.ReadAllText(config) == content && File.ReadAllText(auth) == beforeAuth &&
                     File.ReadAllText(profiles) == beforeProfiles, "Conflict changed files: " + entry);
@@ -268,7 +268,7 @@ internal static class ProviderSyncTests
         foreach (bool official in new[] { false, true })
         {
             File.WriteAllText(config, "cli_auth_credentials_store = \"file\" # example keep\n" + baseline, Utf8);
-            if (official) Call(store, "SaveOfficial"); else Call(store, "Save", customData);
+            if (official) Call(store, "SaveOfficial", String.Empty); else Call(store, "Save", customData);
             string updated = File.ReadAllText(config);
             Check(updated.Contains("cli_auth_credentials_store = \"file\" # example keep"), "File storage changed");
         }
@@ -293,13 +293,13 @@ internal static class ProviderSyncTests
         string unrelated = "[features]\nexample = true\n";
         string initial = File.ReadAllText(config).Replace("[model_providers.custom]", "[model_providers.\"custom\"] # example") + extras + unrelated;
         File.WriteAllText(config, initial, Utf8);
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         Check(!File.ReadAllText(config).Contains("model_providers") && File.ReadAllText(config).Contains(unrelated.Replace("\n", Environment.NewLine)),
             "Official config retained provider tables or lost unrelated tables");
         var saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
         Check(((string)saved["model_providers_toml"]).Contains(extras), "Provider snapshot lost unknown/nested/multiline values");
         string snapshot = (string)saved["model_providers_toml"];
-        Call(store, "SaveOfficial");
+        Call(store, "SaveOfficial", String.Empty);
         saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
         Check((string)saved["model_providers_toml"] == snapshot, "Repeated official save erased providers");
         object loaded = Call(store, "Load");
@@ -316,11 +316,62 @@ internal static class ProviderSyncTests
         bool failed = false;
         using (var locked = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            try { Call(store, "SaveOfficial"); } catch (TargetInvocationException) { failed = true; }
+            try { Call(store, "SaveOfficial", String.Empty); } catch (TargetInvocationException) { failed = true; }
         }
         Check(failed && File.ReadAllText(config) == restored && File.ReadAllText(auth) == beforeAuth &&
             File.ReadAllText(profiles) == beforeProfiles, "Provider removal failure did not restore all files");
         Console.WriteLine("PASS: complete provider snapshot, clean official config, repeated saves, form restore, quoted/nested/multiline tables and rollback");
+    }
+
+    private static void TestOfficialProxy(string root, object customData)
+    {
+        UseFixture(root, "official-proxy");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        string proxy = "http://127.0.0.1:17890";
+        Call(store, "SaveOfficial", proxy + "/");
+        object official = Call(store, "Load");
+        Check((string)Field(official, "OfficialProxyUrl") == proxy, "Proxy setting not persisted or normalized");
+        var before = Environment.GetEnvironmentVariables();
+        var start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", official);
+        Check(start.Arguments.Contains("--proxy-server=" + proxy) && !start.Arguments.Contains("host-resolver-rules"),
+            "Official Chromium proxy missing or cloud endpoints blocked");
+        foreach (string key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" })
+            Check(start.EnvironmentVariables[key] == proxy, "Backend proxy missing: " + key);
+        Check(start.EnvironmentVariables["NODE_USE_ENV_PROXY"] == "1" &&
+            start.EnvironmentVariables["NO_PROXY"] == "localhost,127.0.0.1,::1", "Node proxy or loopback bypass missing");
+        foreach (System.Collections.DictionaryEntry entry in before)
+            Check(Environment.GetEnvironmentVariable((string)entry.Key) == (string)entry.Value, "Parent environment changed");
+        string config = Path.Combine(fixture, "config.toml"), auth = Path.Combine(fixture, "auth.json"),
+            profiles = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string originalConfig = File.ReadAllText(config), originalAuth = File.ReadAllText(auth), originalProfiles = File.ReadAllText(profiles);
+        foreach (string invalid in new[] { "127.0.0.1:17890", "socks5://localhost:17890", "http://user:pass@localhost:17890",
+            "http://localhost:17890/path", "http://localhost:17890/?x=1", "http://localhost:0" })
+        {
+            bool rejected = false;
+            try { Call(store, "SaveOfficial", invalid); } catch (TargetInvocationException) { rejected = true; }
+            Check(rejected && File.ReadAllText(config) == originalConfig && File.ReadAllText(auth) == originalAuth &&
+                File.ReadAllText(profiles) == originalProfiles, "Invalid proxy changed mode files: " + invalid);
+        }
+        bool failed = false;
+        using (var locked = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "SaveOfficial", "http://localhost:17891"); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && File.ReadAllText(profiles) == originalProfiles && File.ReadAllText(auth) == originalAuth,
+            "Failed proxy save did not roll back");
+        Call(store, "Save", customData);
+        object custom = Call(store, "Load");
+        Check((string)Field(custom, "OfficialProxyUrl") == proxy, "Custom save erased official proxy");
+        start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", custom);
+        Check(!start.Arguments.Contains("proxy-server") && start.Arguments.Contains("host-resolver-rules"),
+            "Official proxy applied to custom mode");
+        Check(start.EnvironmentVariables["HTTPS_PROXY"] == Environment.GetEnvironmentVariable("HTTPS_PROXY"),
+            "Custom proxy environment changed");
+        Call(store, "SaveOfficial", String.Empty);
+        start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", Call(store, "Load"));
+        Check(start.Arguments == String.Empty && start.EnvironmentVariables["HTTPS_PROXY"] == Environment.GetEnvironmentVariable("HTTPS_PROXY"),
+            "Empty proxy still injected launch settings");
+        Console.WriteLine("PASS: scoped Chromium/backend/Node proxy, parent environment unchanged, validation, mode persistence, rollback and disabling");
     }
 
     [STAThread]
@@ -378,6 +429,7 @@ internal static class ProviderSyncTests
             TestClientStore();
             TestOAuthModes(root, data);
             TestProviderProfiles(root, data);
+            TestOfficialProxy(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";
