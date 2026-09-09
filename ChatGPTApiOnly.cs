@@ -368,7 +368,16 @@ internal static class ChatGPTApiOnly
                 }
 
                 stage = "创建 ChatGPT 进程";
-                Process.Start(ClientStartInfo(executable, config));
+                try
+                {
+                    Process.Start(ClientStartInfo(executable, config));
+                }
+                catch (System.ComponentModel.Win32Exception exception)
+                {
+                    if (exception.NativeErrorCode != 5) throw;
+                    stage = "通过 Windows 应用激活 ChatGPT";
+                    Process.Start(ClientActivationInfo(packageRoot, config));
+                }
             }
             catch (Exception exception)
             {
@@ -2037,6 +2046,16 @@ internal static class ChatGPTApiOnly
         if (candidates.Count == 0) return null;
         packageRoot = candidates[0].Root;
         return candidates[0].Executable;
+    }
+
+    private static ProcessStartInfo ClientActivationInfo(string packageRoot, ConfigData config)
+    {
+        string packageName = new DirectoryInfo(packageRoot).Name;
+        Match match = Regex.Match(packageName, "^OpenAI\\.Codex_[^_]+_.*__([^_]+)$", RegexOptions.IgnoreCase);
+        if (!match.Success) throw new InvalidOperationException("无法确定 ChatGPT 应用包标识。");
+        var start = ClientStartInfo("explorer.exe", config);
+        start.Arguments = "shell:AppsFolder\\OpenAI.Codex_" + match.Groups[1].Value + "!App";
+        return start;
     }
 
     private static Version ParseVersion(string packageName)
