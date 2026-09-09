@@ -13,6 +13,18 @@ using Microsoft.Win32;
 
 internal static class ChatGPTApiOnly
 {
+    private static string StartupFailureMessage(string stage, Exception exception)
+    {
+        try
+        {
+            string directory = Path.Combine(ConfigStore.ConfigDirectory, "launcher-profiles", "logs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "launcher.log"),
+                String.Format("[{0:O}] stage={1}{2}{3}{4}", DateTime.Now, stage, Environment.NewLine, exception, Environment.NewLine), Encoding.UTF8);
+        }
+        catch { }
+        return String.Format("启动失败（{0}）：{1}{2}详细诊断已写入 .codex\\launcher-profiles\\logs\\launcher.log", stage, exception.Message, Environment.NewLine);
+    }
     private const string PackageRegistryPath =
         @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
 
@@ -343,6 +355,7 @@ internal static class ChatGPTApiOnly
 
         private void StartChatGpt()
         {
+            string stage = "查找 ChatGPT 安装";
             try
             {
                 string executable = FindLatestChatGptExecutable(out packageRoot);
@@ -354,13 +367,14 @@ internal static class ChatGPTApiOnly
                     return;
                 }
 
+                stage = "创建 ChatGPT 进程";
                 Process.Start(ClientStartInfo(executable, config));
             }
             catch (Exception exception)
             {
                 pollTimer.Stop();
                 progressBar.Value = 0;
-                MessageBox.Show(this, exception.Message, "ChatGPT API Only",
+                MessageBox.Show(this, StartupFailureMessage(stage, exception), "ChatGPT API Only",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
             }
@@ -794,20 +808,25 @@ internal static class ChatGPTApiOnly
             errors.Clear();
             if (modeTabs.SelectedTab == officialTab)
             {
+                string stage = "校验官方代理";
                 try
                 {
                     string proxy = ConfigStore.NormalizeOfficialProxyUrl(officialProxyTextBox.Text);
+                    stage = "校验模式切换";
                     ConfigStore.ValidateModeSwitch(true);
                     string packageRoot;
+                    stage = "查找 ChatGPT 安装";
                     FindLatestChatGptExecutable(out packageRoot);
+                    stage = "停止旧 ChatGPT 进程";
                     StopPackagedChatGptProcesses(packageRoot, true);
+                    stage = "保存官方配置";
                     ConfigStore.SaveOfficial(proxy);
                     DialogResult = DialogResult.OK;
                     Close();
                 }
                 catch (Exception exception)
                 {
-                    MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this, StartupFailureMessage(stage, exception), "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 return;
             }
@@ -859,7 +878,7 @@ internal static class ChatGPTApiOnly
                 saveButton.Enabled = true;
                 saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
                 MessageBox.Show(this,
-                    "\u65e0\u6cd5\u4fdd\u5b58\u914d\u7f6e\uff1a" + Environment.NewLine + exception.Message,
+                    StartupFailureMessage("保存自定义配置或启动", exception),
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
