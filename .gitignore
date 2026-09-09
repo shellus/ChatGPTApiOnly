@@ -11,6 +11,7 @@ config.toml
 auth.json
 *.bak
 backups_state/
+launcher-profiles/
 
 # Machine-specific documentation
 README.local.md

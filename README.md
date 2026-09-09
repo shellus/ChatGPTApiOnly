@@ -2,12 +2,12 @@
 
 <img src="output/imagegen/app-logo.png" alt="ChatGPT API Only 应用图标" width="96" />
 
-桌面版 ChatGPT 启动器，面向使用自定义 API 的 Microsoft Store ChatGPT 桌面应用。
+桌面版 ChatGPT 启动器，支持官方账号登录与自定义 API 两种连接方式。
 
 ## 主要功能
 
 1. **不用手动编辑配置文件**
-   通过图形化表单填写提供者名称、API 地址、API Key、模型和推理级别，自动维护 `config.toml` 与 `auth.json`。
+   通过“官方账号”“自定义 API”两个 Tab 选择连接方式；自定义模式可填写提供者名称、API 地址、API Key、模型和思考层级。
 2. **解决启动时卡住一分钟的问题**
    让启动阶段无法访问的 OpenAI/ChatGPT 外壳地址立即失败，不再等待网络超时。典型启动等待由约 60 秒缩短到约 7 秒（60 秒 → 7 秒），自定义 API 请求不受影响。
 3. **可选修复历史对话丢失问题**
@@ -27,21 +27,36 @@
 
 ![ChatGPT API Only 启动进度](docs/images/loading.gif)
 
-### API 配置与对话修复
+### 官方账号
 
-![ChatGPT API Only API 配置与对话修复](docs/images/config-form.gif)
+![ChatGPT API Only 官方账号设置](docs/images/official-mode.png)
 
-配置动画使用 `example` 占位值，不包含真实 API 配置或本机信息。
+### 自定义 API
+
+![ChatGPT API Only 自定义 API 设置](docs/images/custom-mode.png)
+
+配置截图使用隔离 fixture 和 `example` 占位值，不包含真实 API 配置或本机信息。
 
 ## 启动流程
 
 - 首先检测 ChatGPT 是否已安装；未安装时询问是否前往商店，确定后打开安装页面并退出，取消则直接退出。安装完成后重新运行启动器。
 - 配置有效时显示预计启动进度并启动桌面应用。
-- 配置无效时打开自定义 API 表单；启动页也可通过按钮或空格键打开表单。
+- 配置不完整或登录方式与路由不一致时打开连接设置；启动页也可通过按钮或空格键打开设置。
 - 表单保存成功后继续启动；保存或历史对话修复失败时不启动。
 - 不使用启动器级单实例锁。
 
-配置写入用户 Codex 目录下的 `config.toml` 与 `auth.json`。真实 API Key 不应写入源码、项目文档或版本控制。
+配置写入用户 Codex 目录下的 `config.toml` 与 `auth.json`，两种模式的凭证和模型设置保存在该目录的 `launcher-profiles/modes.json`。这些文件包含私人配置，不进入版本控制。
+
+## 官方账号与自定义 API
+
+- Tab 切换只改变界面，点击“应用并启动”才写入配置并重新启动客户端。保存前会停止正在运行的客户端；无法停止或保存失败时不会继续启动。
+- **官方账号**：使用内置 `openai` provider，直接连接官方服务，沿用官方 OAuth 凭证。点击“登录 / 切换账号”应用官方模式并打开客户端，由客户端完成登录；已有账号需要在客户端账号菜单退出后重新登录。启动器不自行实现 OAuth，也不验证账号权益。
+- **自定义 API**：使用 `custom` provider 和 API Key，保留已有 API 配置及默认中等（`medium`）的思考层级。OAuth 令牌不会写入此模式的活动认证文件。
+- 模式切换保留另一个模式的配置；切走官方模式时保存客户端最新刷新后的凭证。官方客户端退出登录后，不恢复旧凭证。首次切入官方模式不沿用自定义模型名，由官方客户端选择默认模型；之后保留官方模式自身的模型设置。
+- 如果发现官方凭证但路由仍为 `custom`，默认展示官方 Tab，等待“应用并启动”后才改为官方路由。保存时使用 `forced_login_method` 明确认证方式，并使用文件凭证存储，确保与 `auth.json` 一致。
+- “修复对话”仅位于自定义 API Tab，显式把历史数据关联到 `custom`；模式切换不会迁移历史对话，两个 provider 的历史可见范围可能不同。
+
+登录方式和凭证存储配置以 [Codex 官方配置 schema](https://github.com/openai/codex/blob/main/codex-rs/core/config.schema.json) 为依据。
 
 ## 安装与更新客户端
 
@@ -54,13 +69,13 @@
 
 ## 工作原理
 
-启动器让 Electron 外壳访问可选的 OpenAI/ChatGPT 云端地址时立即失败，避免不可达网络请求等待超时；内置 Codex app-server 仍按用户配置访问自定义 API。
+自定义 API 模式让 Electron 外壳访问可选的 OpenAI/ChatGPT 云端地址时立即失败，避免不可达网络请求等待超时；内置 Codex app-server 仍按用户配置访问自定义 API。官方模式不附加这些阻断规则，并从客户端子进程环境移除 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`，使官方登录请求走官方服务。
 
 这些外壳域名规则也可能影响客户端内置更新器。独立的 Microsoft Store 不使用启动器传给客户端的网络规则，可通过“检查更新”入口更新客户端。
 
 ## Provider 字段
 
-`model_provider` 是 Codex 用于筛选历史对话的 provider ID。本项目固定使用 `custom`：
+`model_provider` 是 Codex 用于筛选历史对话的 provider ID。自定义 API 模式固定使用 `custom`，官方模式使用内置 `openai`：
 
 ```toml
 model_provider = "custom"
@@ -111,6 +126,8 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 自动回归测试会自行创建临时 fixture 并设置上述环境变量，覆盖成功更新、无变更幂等、数据库失败回滚、备份、保存配置不触发同步、大量历史对话内存占用，以及修复期间的界面响应和分阶段进度：
 
 同一测试入口还覆盖客户端安装检测分支、确认和取消安装、商店和更新 URI、浏览器回退与双重失败提示；这些测试使用替代启动动作，不实际安装或更新客户端。
+
+OAuth 回归使用虚构的 `example` 凭证，覆盖混合登录状态、双向切换、刷新后凭证保留、官方启动参数、Tab 不落盘、多文件保存失败恢复、退出登录不恢复旧凭证，以及切换不修改历史数据。
 
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `

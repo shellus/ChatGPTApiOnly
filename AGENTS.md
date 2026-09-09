@@ -9,9 +9,11 @@
 
 ## 配置与 Provider
 
-- `model_provider` 是历史对话使用的 provider ID，本项目固定为 `custom`。
+- `model_provider` 是历史对话使用的 provider ID；自定义 API 模式固定为 `custom`，官方账号模式使用内置 `openai`。
 - 表单中的“提供者名称”只对应 `[model_providers.custom].name`，不得作为 provider ID 写入历史数据。
-- 保存配置只更新 `config.toml` 与 `auth.json`，不得隐式修复历史对话。
+- 模式切换更新 `config.toml`、`auth.json` 与本机 `launcher-profiles/modes.json`；切换 Tab 不落盘，保存或切换模式不得隐式修复历史对话。
+- 官方模式由官方客户端登录及刷新 OAuth 凭证，启动时不得携带域名阻断或自定义 API 环境变量。仅凭本地凭证存在不得声称账号有效。
+- 切换前保留当前凭证及各模式模型设置，官方退出登录后不得恢复旧令牌。多文件保存失败必须尝试恢复原状态并阻止启动。
 - 历史对话修复只能由“修复对话”按钮显式触发。进度必须来自真实工作量，并以临时 `n/total` 进度区展示。
 - 修改 rollout 或 SQLite 前必须创建备份；SQLite 更新使用事务，失败时恢复已改写的 rollout 并阻止误报成功。
 

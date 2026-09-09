@@ -84,6 +84,23 @@ internal static class ChatGPTApiOnly
         catch { return SystemIcons.Application; }
     }
 
+    private static ProcessStartInfo ClientStartInfo(string executable, ConfigData config)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = executable,
+            Arguments = config.OfficialMode ? String.Empty : Quote("--host-resolver-rules=" + ResolverRules),
+            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            UseShellExecute = false
+        };
+        if (config.OfficialMode)
+        {
+            start.EnvironmentVariables.Remove("OPENAI_API_KEY");
+            start.EnvironmentVariables.Remove("OPENAI_BASE_URL");
+        }
+        return start;
+    }
+
     private static bool EnsureClientInstalled(IWin32Window owner)
     {
         string packageRoot;
@@ -255,9 +272,9 @@ internal static class ChatGPTApiOnly
             {
                 Location = new Point(280, 112),
                 Size = new Size(112, 30),
-                Text = "\u914d\u7f6e API",
+                Text = "\u8fde\u63a5\u8bbe\u7f6e",
                 TabIndex = 2,
-                AccessibleName = "\u914d\u7f6e API",
+                AccessibleName = "\u8fde\u63a5\u8bbe\u7f6e",
                 AccessibleDescription = "\u6253\u5f00\u81ea\u5b9a\u4e49 API \u914d\u7f6e\u3002\u4e5f\u53ef\u6309\u7a7a\u683c\u952e\u3002"
             };
             configureButton.Click += delegate { OpenConfiguration(); };
@@ -310,7 +327,8 @@ internal static class ChatGPTApiOnly
             elapsed.Start();
             lastSecondsRemaining = -1;
             progressBar.Value = 0;
-            statusLabel.Text = "\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u9884\u8ba1\u7ea6 4 \u79d2";
+            progressBar.Style = config.OfficialMode ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+            statusLabel.Text = config.OfficialMode ? "\u6b63\u5728\u542f\u52a8 ChatGPT\uff08\u5b98\u65b9\u8d26\u53f7\uff09" : "\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u9884\u8ba1\u7ea6 4 \u79d2";
             pollTimer.Start();
         }
 
@@ -327,13 +345,7 @@ internal static class ChatGPTApiOnly
                     return;
                 }
 
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = executable,
-                    Arguments = Quote("--host-resolver-rules=" + ResolverRules),
-                    WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    UseShellExecute = false
-                });
+                Process.Start(ClientStartInfo(executable, config));
             }
             catch (Exception exception)
             {
@@ -404,6 +416,7 @@ internal static class ChatGPTApiOnly
             }
 #endif
 
+            if (config.OfficialMode) return;
             double elapsedSeconds = elapsed.Elapsed.TotalSeconds;
             double expectedSeconds = ExpectedStartupTime.TotalSeconds;
             int progress = Math.Min(95, (int)Math.Round(elapsedSeconds / expectedSeconds * 100));
@@ -437,6 +450,9 @@ internal static class ChatGPTApiOnly
         private readonly ProgressBar repairProgressBar;
         private readonly Label repairProgressLabel;
         private bool repairInProgress;
+        private readonly TabControl modeTabs;
+        private readonly TabPage officialTab;
+        private readonly TabPage customTab;
 
         internal ConfigForm(ConfigData config)
         {
@@ -556,6 +572,64 @@ internal static class ChatGPTApiOnly
             Controls.Add(cancelButton);
             Controls.Add(storeButton);
             Controls.Add(updatesButton);
+
+            // Reuse the existing API form inside its tab; shared actions stay outside.
+            modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 330), TabIndex = 0 };
+            officialTab = new TabPage("\u5b98\u65b9\u8d26\u53f7") { UseVisualStyleBackColor = true };
+            customTab = new TabPage("\u81ea\u5b9a\u4e49 API") { UseVisualStyleBackColor = true };
+            modeTabs.TabPages.Add(officialTab);
+            modeTabs.TabPages.Add(customTab);
+            var fields = new List<Control>();
+            foreach (Control control in Controls)
+                if (control.Top >= 96 && control.Top < 370) fields.Add(control);
+            foreach (Control control in fields)
+            {
+                control.Location = new Point(control.Left - 20, control.Top - 78);
+                customTab.Controls.Add(control);
+            }
+            var status = new Label
+            {
+                Location = new Point(20, 24), Size = new Size(480, 42),
+                Text = config.HasOfficialCredentials
+                    ? "\u68c0\u6d4b\u5230\u5b98\u65b9\u767b\u5f55\u51ed\u8bc1"
+                    : "\u5c1a\u672a\u68c0\u6d4b\u5230\u5b98\u65b9\u767b\u5f55\u51ed\u8bc1",
+                Font = new Font(Font, FontStyle.Bold)
+            };
+            officialTab.Controls.Add(status);
+            officialTab.Controls.Add(new Label
+            {
+                Location = new Point(20, 78), Size = new Size(480, 126),
+                Text = "\u4f7f\u7528 ChatGPT \u5b98\u65b9\u8d26\u53f7\u6743\u76ca\uff0c\u76f4\u63a5\u8fde\u63a5 OpenAI\u3002\r\n\r\n" +
+                    "\u767b\u5f55\u3001\u5207\u6362\u8d26\u53f7\u548c\u51ed\u8bc1\u5237\u65b0\u5747\u7531\u5b98\u65b9\u5ba2\u6237\u7aef\u5b8c\u6210\u3002\r\n" +
+                    "\u672c\u5730\u51ed\u8bc1\u5b58\u5728\u4e0d\u4ee3\u8868\u767b\u5f55\u4ecd\u7136\u6709\u6548\u3002\r\n\r\n" +
+                    "\u5207\u6362\u6a21\u5f0f\u4f1a\u4fdd\u7559\u53e6\u4e00\u79cd\u6a21\u5f0f\u7684\u914d\u7f6e\uff0c\u4e0d\u4f1a\u4fee\u6539\u5386\u53f2\u5bf9\u8bdd\u3002"
+            });
+            var loginButton = new Button
+            {
+                Location = new Point(20, 230), Size = new Size(200, 32),
+                Text = "\u767b\u5f55 / \u5207\u6362\u8d26\u53f7", TabIndex = 0
+            };
+            loginButton.Click += delegate
+            {
+                MessageBox.Show(this, "\u5c06\u5e94\u7528\u5b98\u65b9\u6a21\u5f0f\u5e76\u6253\u5f00 ChatGPT\u3002\u8bf7\u5728\u5ba2\u6237\u7aef\u4e2d\u767b\u5f55\uff1b\u5207\u6362\u8d26\u53f7\u65f6\uff0c\u5728\u5ba2\u6237\u7aef\u8d26\u53f7\u83dc\u5355\u9000\u51fa\u540e\u91cd\u65b0\u767b\u5f55\u3002", "ChatGPT API Only");
+                SaveButtonOnClick(loginButton, EventArgs.Empty);
+            };
+            officialTab.Controls.Add(loginButton);
+            Text = heading.Text = "ChatGPT \u8fde\u63a5\u8bbe\u7f6e";
+            intro.Text = "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f\uff0c\u70b9\u51fb\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\u540e\u751f\u6548\u3002";
+            if (!String.IsNullOrEmpty(config.ProfileError))
+            {
+                intro.Text = "\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u6a21\u5f0f\u914d\u7f6e\uff0c\u8bf7\u68c0\u67e5 launcher-profiles/modes.json\u3002";
+                intro.ForeColor = Color.Firebrick;
+            }
+            saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
+            modeTabs.SelectedTab = config.OfficialMode || config.AuthMode == "chatgpt" ? officialTab : customTab;
+            Controls.Add(modeTabs);
+            repairProgressCaption.Top += 40;
+            repairProgressBar.Top += 40;
+            repairProgressLabel.Top += 40;
+            SetFooterTop(414);
+            ClientSize = new Size(572, 450);
         }
 
         private async void RepairButtonOnClick(object sender, EventArgs e)
@@ -622,8 +696,8 @@ internal static class ChatGPTApiOnly
         private void ShowRepairProgress()
         {
             repairProgressCaption.Text = "\u626b\u63cf\u5bf9\u8bdd";
-            SetFooterTop(414);
-            ClientSize = new Size(572, 450);
+            SetFooterTop(454);
+            ClientSize = new Size(572, 490);
             repairProgressCaption.Visible = true;
             repairProgressBar.Visible = true;
             repairProgressLabel.Visible = true;
@@ -637,8 +711,8 @@ internal static class ChatGPTApiOnly
             repairProgressBar.Maximum = 1;
             repairProgressBar.Value = 0;
             repairProgressLabel.Text = String.Empty;
-            SetFooterTop(374);
-            ClientSize = new Size(572, 410);
+            SetFooterTop(414);
+            ClientSize = new Size(572, 450);
         }
 
         private void SetFooterTop(int top)
@@ -650,6 +724,7 @@ internal static class ChatGPTApiOnly
         private void SetRepairBusy(bool busy)
         {
             repairInProgress = busy;
+            modeTabs.Enabled = !busy;
             providerNameTextBox.Enabled = !busy;
             baseUrlTextBox.Enabled = !busy;
             apiKeyTextBox.Enabled = !busy;
@@ -700,6 +775,23 @@ internal static class ChatGPTApiOnly
         private void SaveButtonOnClick(object sender, EventArgs e)
         {
             errors.Clear();
+            if (modeTabs.SelectedTab == officialTab)
+            {
+                try
+                {
+                    string packageRoot;
+                    FindLatestChatGptExecutable(out packageRoot);
+                    StopPackagedChatGptProcesses(packageRoot, true);
+                    ConfigStore.SaveOfficial();
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                return;
+            }
             Control firstInvalid = null;
 
             ValidateRequired(providerNameTextBox, "\u8bf7\u8f93\u5165\u63d0\u4f9b\u8005\u540d\u79f0\u3002", ref firstInvalid);
@@ -734,6 +826,9 @@ internal static class ChatGPTApiOnly
                 UseWaitCursor = true;
                 Refresh();
 
+                string packageRoot;
+                FindLatestChatGptExecutable(out packageRoot);
+                StopPackagedChatGptProcesses(packageRoot, true);
                 ConfigStore.Save(data);
                 DialogResult = DialogResult.OK;
                 Close();
@@ -742,7 +837,7 @@ internal static class ChatGPTApiOnly
             {
                 UseWaitCursor = false;
                 saveButton.Enabled = true;
-                saveButton.Text = "\u4fdd\u5b58\u5e76\u542f\u52a8";
+                saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
                 MessageBox.Show(this,
                     "\u65e0\u6cd5\u4fdd\u5b58\u914d\u7f6e\uff1a" + Environment.NewLine + exception.Message,
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -770,11 +865,21 @@ internal static class ChatGPTApiOnly
         internal bool? RequiresOpenAiAuth;
         internal bool ConfigReadable;
         internal bool AuthReadable;
+        internal bool OfficialMode;
+        internal bool HasOfficialCredentials;
+        internal bool ActiveOfficialCredentials;
+        internal string ForcedLoginMethod;
+        internal string CredentialsStore;
+        internal string ProfileError;
 
         internal bool IsValid
         {
             get
             {
+                if (!String.IsNullOrEmpty(ProfileError)) return false;
+                if (!String.IsNullOrEmpty(CredentialsStore) && CredentialsStore != "file") return false;
+                if (!String.IsNullOrEmpty(ForcedLoginMethod) && ForcedLoginMethod != (OfficialMode ? "chatgpt" : "api")) return false;
+                if (OfficialMode) return ConfigReadable && AuthReadable && AuthMode == "chatgpt" && ActiveOfficialCredentials;
                 bool authModeValid = !AuthModePresent ||
                     String.Equals(AuthMode, "apikey", StringComparison.OrdinalIgnoreCase);
                 return ConfigReadable && AuthReadable &&
@@ -806,12 +911,32 @@ internal static class ChatGPTApiOnly
 
         private static string ConfigPath { get { return Path.Combine(ConfigDirectory, "config.toml"); } }
         private static string AuthPath { get { return Path.Combine(ConfigDirectory, "auth.json"); } }
+        private static string ProfilesPath { get { return Path.Combine(ConfigDirectory, "launcher-profiles", "modes.json"); } }
 
         internal static ConfigData Load()
         {
             var data = new ConfigData();
             LoadToml(data);
             LoadAuth(data);
+            Dictionary<string, object> profiles;
+            try { profiles = ReadObject(ProfilesPath); }
+            catch (Exception exception) { data.ProfileError = exception.Message; return data; }
+            if (data.OfficialMode)
+            {
+                data.Model = ProfileString(profiles, "custom_model");
+                data.ReasoningEffort = ProfileString(profiles, "custom_effort");
+            }
+            if (String.IsNullOrWhiteSpace(data.ApiKey))
+                data.ApiKey = ProfileString(profiles, "custom_key");
+            if (!data.OfficialMode)
+            {
+                try
+                {
+                    data.HasOfficialCredentials = data.HasOfficialCredentials ||
+                        HasOfficialTokens(ParseObject(ProfileString(profiles, "official_auth")));
+                }
+                catch (Exception exception) { data.ProfileError = exception.Message; }
+            }
             return data;
         }
 
@@ -829,29 +954,154 @@ internal static class ChatGPTApiOnly
 
         internal static void Save(ConfigData data)
         {
-            Directory.CreateDirectory(ConfigDirectory);
-            string existingToml = File.Exists(ConfigPath) ? File.ReadAllText(ConfigPath, Encoding.UTF8) : String.Empty;
+            Dictionary<string, object> profiles = CaptureProfiles();
+            string existingToml = ReadText(ConfigPath) ?? String.Empty;
             string updatedToml = UpdateToml(existingToml, data);
-            WriteAtomic(ConfigPath, updatedToml);
-
-            Dictionary<string, object> auth = new Dictionary<string, object>(StringComparer.Ordinal);
-            if (File.Exists(AuthPath))
-            {
-                try
-                {
-                    var parsed = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(AuthPath, Encoding.UTF8))
-                        as Dictionary<string, object>;
-                    if (parsed != null) auth = parsed;
-                }
-                catch { }
-            }
+            var auth = new Dictionary<string, object>();
             auth["auth_mode"] = "apikey";
             auth["OPENAI_API_KEY"] = data.ApiKey;
-            WriteAtomic(AuthPath, new JavaScriptSerializer().Serialize(auth) + Environment.NewLine);
+            profiles["custom_key"] = data.ApiKey;
+            profiles["custom_model"] = data.Model;
+            profiles["custom_effort"] = data.ReasoningEffort;
+            CommitMode(updatedToml, new JavaScriptSerializer().Serialize(auth), profiles);
+        }
+
+        private static string ReadText(string path)
+        {
+            return File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : null;
+        }
+
+        private static Dictionary<string, object> ParseObject(string text)
+        {
+            if (String.IsNullOrWhiteSpace(text)) return new Dictionary<string, object>();
+            var result = new JavaScriptSerializer().DeserializeObject(text) as Dictionary<string, object>;
+            if (result == null) throw new InvalidOperationException("Invalid authentication or mode configuration.");
+            return result;
+        }
+
+        private static Dictionary<string, object> ReadObject(string path) { return ParseObject(ReadText(path)); }
+
+        private static string ProfileString(Dictionary<string, object> values, string key)
+        {
+            object value;
+            return values.TryGetValue(key, out value) ? value as string : null;
+        }
+
+        private static bool HasOfficialTokens(Dictionary<string, object> auth)
+        {
+            object tokensValue;
+            if (ProfileString(auth, "auth_mode") != "chatgpt" || !auth.TryGetValue("tokens", out tokensValue)) return false;
+            var tokens = tokensValue as Dictionary<string, object>;
+            return tokens != null && !String.IsNullOrWhiteSpace(ProfileString(tokens, "access_token")) &&
+                !String.IsNullOrWhiteSpace(ProfileString(tokens, "refresh_token"));
+        }
+
+        private static Dictionary<string, object> CaptureProfiles()
+        {
+            var profiles = ReadObject(ProfilesPath);
+            var current = new ConfigData();
+            LoadToml(current);
+            string authText = ReadText(AuthPath);
+            var auth = ParseObject(authText);
+            // Credentials and routing can differ in existing installations.
+            if (ProfileString(auth, "auth_mode") == "chatgpt") profiles["official_auth"] = authText;
+            else if (!String.IsNullOrWhiteSpace(ProfileString(auth, "OPENAI_API_KEY")))
+                profiles["custom_key"] = ProfileString(auth, "OPENAI_API_KEY");
+            if (current.OfficialMode)
+            {
+                profiles["official_model"] = current.Model;
+                profiles["official_effort"] = current.ReasoningEffort;
+                // A logout in the active official mode must not resurrect stale tokens.
+                if (ProfileString(auth, "auth_mode") != "chatgpt") profiles.Remove("official_auth");
+            }
+            else
+            {
+                profiles["custom_model"] = current.Model;
+                profiles["custom_effort"] = current.ReasoningEffort;
+            }
+            return profiles;
+        }
+
+        internal static void SaveOfficial()
+        {
+            var profiles = CaptureProfiles();
+            var lines = new List<string>(Regex.Split(ReadText(ConfigPath) ?? String.Empty, "\\r?\\n"));
+            SetTopLevel(lines, "model_provider", QuoteToml("openai"));
+            RemoveTopLevel(lines, "profile");
+            RemoveTopLevel(lines, "chatgpt_base_url");
+            RemoveTopLevel(lines, "openai_base_url");
+            RemoveTopLevel(lines, "model");
+            RemoveTopLevel(lines, "model_reasoning_effort");
+            string model = ProfileString(profiles, "official_model");
+            string effort = ProfileString(profiles, "official_effort");
+            if (!String.IsNullOrWhiteSpace(model)) SetTopLevel(lines, "model", QuoteToml(model));
+            SetTopLevel(lines, "model_reasoning_effort", QuoteToml(String.IsNullOrWhiteSpace(effort) ? "medium" : effort));
+            SetTopLevel(lines, "forced_login_method", QuoteToml("chatgpt"));
+            SetTopLevel(lines, "cli_auth_credentials_store", QuoteToml("file"));
+            // A user-defined openai provider could redirect OAuth traffic to a custom server.
+            int section = lines.FindIndex(delegate(string line) { return line.Trim() == "[model_providers.openai]"; });
+            if (section >= 0)
+            {
+                int end = section + 1;
+                while (end < lines.Count && !lines[end].TrimStart().StartsWith("[")) end++;
+                lines.RemoveRange(section, end - section);
+            }
+            string auth = ProfileString(profiles, "official_auth");
+            if (String.IsNullOrWhiteSpace(auth)) auth = "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null}";
+            var officialAuth = ParseObject(auth);
+            if (ProfileString(officialAuth, "auth_mode") != "chatgpt")
+                throw new InvalidOperationException("\u4fdd\u5b58\u7684\u5b98\u65b9\u51ed\u8bc1\u683c\u5f0f\u4e0d\u6b63\u786e\uff0c\u672a\u5207\u6362\u6a21\u5f0f\u3002");
+            if (!String.IsNullOrWhiteSpace(ProfileString(officialAuth, "OPENAI_API_KEY")))
+            {
+                officialAuth["OPENAI_API_KEY"] = null;
+                auth = new JavaScriptSerializer().Serialize(officialAuth);
+            }
+            CommitMode(String.Join(Environment.NewLine, lines.ToArray()), auth, profiles);
+        }
+
+        private static void CommitMode(string toml, string auth, Dictionary<string, object> profiles)
+        {
+            Directory.CreateDirectory(ConfigDirectory);
+            Directory.CreateDirectory(Path.GetDirectoryName(ProfilesPath));
+            string[] paths = { ProfilesPath, AuthPath, ConfigPath };
+            string[] original = { ReadText(ProfilesPath), ReadText(AuthPath), ReadText(ConfigPath) };
+            string[] updated = { new JavaScriptSerializer().Serialize(profiles), auth, toml };
+            int attempted = -1;
+            try
+            {
+                for (int index = 0; index < paths.Length; index++)
+                {
+                    attempted = index;
+                    WriteAtomic(paths[index], updated[index]);
+                }
+            }
+            catch (Exception failure)
+            {
+                var errors = new List<Exception> { failure };
+                for (int index = attempted; index >= 0; index--)
+                {
+                    try
+                    {
+                        if (original[index] == null) { if (File.Exists(paths[index])) File.Delete(paths[index]); }
+                        else WriteAtomic(paths[index], original[index]);
+                    }
+                    catch (Exception rollback) { errors.Add(rollback); }
+                }
+                throw new AggregateException("\u5207\u6362\u6a21\u5f0f\u5931\u8d25\uff0c\u672a\u542f\u52a8\u5ba2\u6237\u7aef\u3002", errors);
+            }
+        }
+
+        private static void RemoveTopLevel(List<string> lines, string key)
+        {
+            int end = lines.FindIndex(delegate(string line) { return line.TrimStart().StartsWith("["); });
+            if (end < 0) end = lines.Count;
+            for (int index = end - 1; index >= 0; index--)
+                if (Regex.IsMatch(lines[index], "^\\s*" + Regex.Escape(key) + "\\s*=")) lines.RemoveAt(index);
         }
 
         private static void LoadToml(ConfigData data)
         {
+            data.OfficialMode = true;
             if (!File.Exists(ConfigPath)) return;
             try
             {
@@ -871,7 +1121,9 @@ internal static class ChatGPTApiOnly
                     string value = line.Substring(equals + 1).Trim();
                     if (section.Length == 0)
                     {
-                        if (key == "model_provider" && ParseTomlString(value) != "custom") data.ConfigReadable = false;
+                        if (key == "model_provider") data.OfficialMode = ParseTomlString(value) == "openai";
+                        else if (key == "forced_login_method") data.ForcedLoginMethod = ParseTomlString(value);
+                        else if (key == "cli_auth_credentials_store") data.CredentialsStore = ParseTomlString(value);
                         else if (key == "model") data.Model = ParseTomlString(value);
                         else if (key == "model_reasoning_effort") data.ReasoningEffort = ParseTomlString(value);
                     }
@@ -884,6 +1136,12 @@ internal static class ChatGPTApiOnly
                     }
                 }
                 string all = File.ReadAllText(ConfigPath, Encoding.UTF8);
+                if (data.OfficialMode)
+                {
+                    data.ConfigReadable = !Regex.IsMatch(all, "(?m)^\\s*(profile|chatgpt_base_url|openai_base_url)\\s*=") &&
+                        !all.Contains("[model_providers.openai]");
+                    return;
+                }
                 data.ConfigReadable = Regex.IsMatch(all, "(?m)^\\s*model_provider\\s*=\\s*\"custom\"\\s*(?:#.*)?$") &&
                     data.Model != null && data.ReasoningEffort != null && data.ProviderName != null &&
                     data.BaseUrl != null && data.WireApi != null && data.RequiresOpenAiAuth.HasValue;
@@ -907,6 +1165,8 @@ internal static class ChatGPTApiOnly
                     data.AuthMode = value as string;
                 }
                 data.AuthReadable = true;
+                data.HasOfficialCredentials = HasOfficialTokens(auth);
+                data.ActiveOfficialCredentials = data.HasOfficialCredentials;
             }
             catch { data.AuthReadable = false; }
         }
@@ -915,6 +1175,9 @@ internal static class ChatGPTApiOnly
         {
             var lines = new List<string>(Regex.Split(existing, "\\r?\\n"));
             SetTopLevel(lines, "model_provider", QuoteToml("custom"));
+            RemoveTopLevel(lines, "profile");
+            SetTopLevel(lines, "forced_login_method", QuoteToml("api"));
+            SetTopLevel(lines, "cli_auth_credentials_store", QuoteToml("file"));
             SetTopLevel(lines, "model", QuoteToml(data.Model));
             SetTopLevel(lines, "model_reasoning_effort", QuoteToml(data.ReasoningEffort));
             SetSectionValue(lines, "model_providers.custom", "name", QuoteToml(data.ProviderName));
@@ -1531,7 +1794,7 @@ internal static class ChatGPTApiOnly
         return IntPtr.Zero;
     }
 
-    private static void StopPackagedChatGptProcesses(string packageRoot)
+    private static void StopPackagedChatGptProcesses(string packageRoot, bool requireExit = false)
     {
         if (String.IsNullOrWhiteSpace(packageRoot)) return;
         string normalizedRoot = Path.GetFullPath(packageRoot).TrimEnd('\\') + "\\";
@@ -1539,13 +1802,21 @@ internal static class ChatGPTApiOnly
         {
             foreach (Process target in Process.GetProcessesByName(processName))
             {
+                bool matched = false;
                 try
                 {
                     string path = target.MainModule == null ? null : target.MainModule.FileName;
                     if (path == null || !path.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)) continue;
+                    matched = true;
                     target.Kill();
+                    if (requireExit && !target.WaitForExit(5000))
+                        throw new InvalidOperationException("ChatGPT \u5c1a\u672a\u9000\u51fa\uff0c\u8bf7\u5173\u95ed\u5ba2\u6237\u7aef\u540e\u91cd\u8bd5\u3002");
                 }
-                catch { }
+                catch (Exception exception)
+                {
+                    if (requireExit && (matched || processName == "ChatGPT"))
+                        throw new InvalidOperationException("\u65e0\u6cd5\u505c\u6b62 ChatGPT\uff0c\u672a\u5207\u6362\u914d\u7f6e\u3002\u8bf7\u624b\u52a8\u9000\u51fa\u5ba2\u6237\u7aef\u540e\u91cd\u8bd5\u3002", exception);
+                }
                 finally { target.Dispose(); }
             }
         }

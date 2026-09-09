@@ -140,9 +140,103 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: installed/missing client, installation confirm/cancel, Store/update URLs, browser fallback and failure");
     }
 
+    private static void TestOAuthModes(string root, object customData)
+    {
+        UseFixture(root, "oauth");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        string configPath = Path.Combine(fixture, "config.toml");
+        string authPath = Path.Combine(fixture, "auth.json");
+        string profilesPath = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string officialAuth = "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null,\"tokens\":{\"access_token\":\"example-access\",\"refresh_token\":\"example-refresh\",\"id_token\":\"example-id\",\"account_id\":\"example-account\"},\"last_refresh\":\"example-time\"}";
+        Call(store, "Save", customData);
+        string rollout = Rollout("sessions", "example", "example-old");
+        string originalRollout = File.ReadAllText(rollout);
+        File.WriteAllText(authPath, officialAuth, Utf8);
+        object mixed = Call(store, "Load");
+        Check(!(bool)Field(mixed, "OfficialMode") && (bool)Field(mixed, "HasOfficialCredentials") &&
+            !(bool)Property(mixed, "IsValid"), "Mixed OAuth/custom state was silently accepted");
+        Call(store, "SaveOfficial");
+        string officialConfig = File.ReadAllText(configPath);
+        Check(officialConfig.Contains("model_provider = \"openai\"") &&
+            officialConfig.Contains("forced_login_method = \"chatgpt\"") &&
+            !officialConfig.Contains("model = \"example\""), "Official route or model defaults incorrect");
+        Check(File.ReadAllText(authPath) == officialAuth, "Official credentials changed");
+        object official = Call(store, "Load");
+        Check((bool)Property(official, "IsValid") && (bool)Field(official, "OfficialMode"), "Official mode not recognized");
+        var start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", official);
+        Check(start.Arguments == "" && !start.EnvironmentVariables.ContainsKey("OPENAI_BASE_URL") &&
+            !start.EnvironmentVariables.ContainsKey("OPENAI_API_KEY"), "Official start uses custom network parameters");
+
+        string refreshed = officialAuth.Replace("example-refresh", "example-refreshed");
+        File.WriteAllText(authPath, refreshed, Utf8);
+        File.WriteAllText(configPath, "model = \"example-official\"\n" + officialConfig, Utf8);
+        Call(store, "Save", customData);
+        Check(!File.ReadAllText(authPath).Contains("tokens"), "OAuth tokens leaked into custom active auth");
+        object custom = Call(store, "Load");
+        Check((bool)Property(custom, "IsValid"), "Custom mode not restored");
+        start = (ProcessStartInfo)Call(App, "ClientStartInfo", "example.exe", custom);
+        Check(start.Arguments.Contains("host-resolver-rules"), "Custom startup acceleration lost");
+        Call(store, "SaveOfficial");
+        Check(File.ReadAllText(authPath) == refreshed, "Latest refreshed credentials not restored");
+        Check(File.ReadAllText(configPath).Contains("model = \"example-official\""), "Official model setting not retained");
+        Check((string)Field(Call(store, "Load"), "ApiKey") == "example", "Saved API key missing from custom form");
+        Check(File.ReadAllText(rollout) == originalRollout, "Mode switch changed history");
+
+        // Switching tabs and cancelling must be completely read-only.
+        string beforeConfig = File.ReadAllText(configPath);
+        string beforeAuth = File.ReadAllText(authPath);
+        Type formType = App.GetNestedType("ConfigForm", Flags);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            var tabs = (TabControl)Field(form, "modeTabs");
+            Check(tabs.SelectedTab == (TabPage)Field(form, "officialTab"), "Official tab not selected");
+            form.Show();
+            Application.DoEvents();
+            using (var bitmap = new Bitmap(form.Width, form.Height))
+            {
+                form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height));
+                bitmap.Save(Path.Combine(root, "official-mode.png"));
+            }
+            tabs.SelectedTab = (TabPage)Field(form, "customTab");
+            Application.DoEvents();
+            using (var bitmap = new Bitmap(form.Width, form.Height))
+            {
+                form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height));
+                bitmap.Save(Path.Combine(root, "custom-mode.png"));
+            }
+            tabs.SelectedTab = (TabPage)Field(form, "officialTab");
+            form.Close();
+        }
+        Check(beforeConfig == File.ReadAllText(configPath) && beforeAuth == File.ReadAllText(authPath), "Tab selection wrote configuration");
+
+        // A failed config replacement must restore both credentials and saved mode state.
+        string beforeProfiles = File.ReadAllText(profilesPath);
+        bool failed = false;
+        using (var locked = new FileStream(configPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "Save", customData); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && beforeAuth == File.ReadAllText(authPath) && beforeProfiles == File.ReadAllText(profilesPath) &&
+            beforeConfig == File.ReadAllText(configPath), "Failed mode switch did not restore state");
+
+        // A logout must not resurrect the saved official session.
+        File.Delete(authPath);
+        Call(store, "Save", customData);
+        Call(store, "SaveOfficial");
+        Check(!File.ReadAllText(authPath).Contains("example-access"), "Logout resurrected old token");
+        Check(!(bool)Property(Call(store, "Load"), "IsValid"), "Missing official tokens reported valid");
+        UseFixture(root, "oauth-first-run");
+        Call(store, "SaveOfficial");
+        Check((bool)Field(Call(store, "Load"), "OfficialMode") && !(bool)Property(Call(store, "Load"), "IsValid"),
+            "First official launch should wait for client login");
+        Console.WriteLine("PASS: mixed state, OAuth/custom switching, refreshed credentials, startup arguments, read-only tabs, rollback, logout, history preserved");
+    }
+
     [STAThread]
     private static int Main()
     {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         string root = Path.Combine(Path.GetTempPath(), "ChatGPTApiOnly-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -191,6 +285,7 @@ internal static class ProviderSyncTests
             Check(File.ReadAllText(path) == original && !Directory.Exists(Path.Combine(fixture, "backups_state")), "Saving triggered repair");
             Console.WriteLine("PASS: saving configuration does not repair history");
             TestClientStore();
+            TestOAuthModes(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";
@@ -214,8 +309,6 @@ internal static class ProviderSyncTests
             UseFixture(root, "ui");
             for (int index = 0; index < 40; index++) Rollout("sessions", "example-" + index, "example-old");
             Environment.SetEnvironmentVariable("CHATGPT_API_ONLY_PROGRESS_DELAY_MS", "15");
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
             Type formType = App.GetNestedType("ConfigForm", Flags);
             using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new object[] { data }, null))
             using (var timer = new Timer { Interval = 25 })
