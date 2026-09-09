@@ -604,17 +604,12 @@ internal static class ChatGPTApiOnly
                     "\u672c\u5730\u51ed\u8bc1\u5b58\u5728\u4e0d\u4ee3\u8868\u767b\u5f55\u4ecd\u7136\u6709\u6548\u3002\r\n\r\n" +
                     "\u5207\u6362\u6a21\u5f0f\u4f1a\u4fdd\u7559\u53e6\u4e00\u79cd\u6a21\u5f0f\u7684\u914d\u7f6e\uff0c\u4e0d\u4f1a\u4fee\u6539\u5386\u53f2\u5bf9\u8bdd\u3002"
             });
-            var loginButton = new Button
+            officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 230), Size = new Size(200, 32),
-                Text = "\u767b\u5f55 / \u5207\u6362\u8d26\u53f7", TabIndex = 0
-            };
-            loginButton.Click += delegate
-            {
-                MessageBox.Show(this, "\u5c06\u5e94\u7528\u5b98\u65b9\u6a21\u5f0f\u5e76\u6253\u5f00 ChatGPT\u3002\u8bf7\u5728\u5ba2\u6237\u7aef\u4e2d\u767b\u5f55\uff1b\u5207\u6362\u8d26\u53f7\u65f6\uff0c\u5728\u5ba2\u6237\u7aef\u8d26\u53f7\u83dc\u5355\u9000\u51fa\u540e\u91cd\u65b0\u767b\u5f55\u3002", "ChatGPT API Only");
-                SaveButtonOnClick(loginButton, EventArgs.Empty);
-            };
-            officialTab.Controls.Add(loginButton);
+                Location = new Point(20, 230), Size = new Size(480, 54),
+                Text = "\u70b9\u51fb\u4e0b\u65b9\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\uff0c\u5728 ChatGPT \u5ba2\u6237\u7aef\u4e2d\u767b\u5f55\u3002\r\n" +
+                    "\u5207\u6362\u8d26\u53f7\u65f6\uff0c\u5728\u5ba2\u6237\u7aef\u8d26\u53f7\u83dc\u5355\u9000\u51fa\u540e\u91cd\u65b0\u767b\u5f55\u3002"
+            });
             Text = heading.Text = "ChatGPT \u8fde\u63a5\u8bbe\u7f6e";
             intro.Text = "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f\uff0c\u70b9\u51fb\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\u540e\u751f\u6548\u3002";
             if (!String.IsNullOrEmpty(config.ProfileError))
