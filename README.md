@@ -54,8 +54,9 @@
 - **自定义 API**：使用 `custom` provider 和 API Key，保留已有 API 配置及默认中等（`medium`）的思考层级。OAuth 令牌不会写入此模式的活动认证文件。
 - 模式切换保留另一个模式的配置；切走官方模式时保存客户端最新刷新后的凭证。官方客户端退出登录后，不恢复旧凭证。首次切入官方模式不沿用自定义模型名，由官方客户端选择默认模型；之后保留官方模式自身的模型设置。
 - 如果发现官方凭证但路由仍为 `custom`，默认展示官方 Tab，等待“应用并启动”后才改为官方路由。认证方式由 `auth.json` 的 `auth_mode` 与对应凭据决定，请求路由由 `model_provider` 决定。
-- 应用模式时移除旧版启动器写入的 `forced_login_method` 限制，不再写入该字段。`cli_auth_credentials_store` 默认不写，已有 `file` 配置及注释原样保留；若显式使用 `keyring`、`auto`、`ephemeral` 等其他存储方式，提示兼容冲突并阻止切换。
-- 不再删除 `profile`、`chatgpt_base_url`、`openai_base_url` 或 `[model_providers.openai]`。选中了 `profile` 时阻止两种模式的切换；切到官方模式时，发现显式路由覆盖字段或自定义 `openai` provider 也会提示冲突。冲突检查在停止客户端及写入文件之前完成，保留现有配置供手动核对。
+- 启动器不写入 `forced_login_method`；存在显式登录限制时提示冲突，由用户核对配置。`cli_auth_credentials_store` 默认不写，已有 `file` 配置及注释原样保留；若显式使用 `keyring`、`auto`、`ephemeral` 等其他存储方式，提示冲突并阻止切换。
+- 切入官方模式前，将整个 `model_providers` 表（含其他提供者、未知字段、注释和嵌套表）原文保存在 `launcher-profiles/modes.json` 的 `model_providers_toml` 字段，并从 `config.toml` 移除；切回自定义 API 时恢复该片段，再更新表单对应字段。官方模式下，自定义 API 表单从该文件读取；重复保存官方模式不会清空已保存的提供者。
+- 不删除 `profile`、`chatgpt_base_url` 或 `openai_base_url`。选中了 `profile` 时阻止两种模式的切换；切到官方模式时，发现显式路由覆盖字段也会提示冲突。提供者须使用 TOML 表头，根级内联表或点分赋值会提示冲突。冲突检查在停止客户端及写入文件之前完成，保留现有配置供手动核对。
 - “修复对话”仅位于自定义 API Tab，显式把历史数据关联到 `custom`；模式切换不会迁移历史对话，两个 provider 的历史可见范围可能不同。
 
 登录方式和凭证存储配置以 [Codex 官方配置 schema](https://github.com/openai/codex/blob/main/codex-rs/core/config.schema.json) 为依据。
@@ -131,7 +132,7 @@ Provider 同步的隔离测试入口只在定义 `PROVIDER_SYNC_TEST` 时编译�
 
 OAuth 回归使用虚构的 `example` 凭证，覆盖混合登录状态、双向切换、刷新后凭证保留、官方启动参数、Tab 不落盘、多文件保存失败恢复、退出登录不恢复旧凭证，以及切换不修改历史数据。
 
-模式配置回归还覆盖旧版登录限制清理、已有文件存储设置保留，以及路由或凭据存储冲突时三个配置文件均不被改写。
+模式配置回归还覆盖完整提供者配置的保存、清理与恢复，带引号的表头、嵌套表、多行值、重复保存、已有文件存储设置保留，以及路由或凭据存储冲突和保存失败时三个配置文件均不被改写。
 
 ```powershell
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `

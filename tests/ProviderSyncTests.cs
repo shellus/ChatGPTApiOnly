@@ -249,8 +249,7 @@ internal static class ProviderSyncTests
                 "profile = \"example\"\n", "cli_auth_credentials_store = \"keyring\"\n",
                 "cli_auth_credentials_store = \"auto\"\n", "cli_auth_credentials_store = \"ephemeral\"\n",
                 "chatgpt_base_url = \"https://example.com\"\n", "openai_base_url = \"https://example.com/v1\"\n",
-                "[model_providers.openai]\nbase_url = \"https://example.com/v1\"\n",
-                "[model_providers.\"openai\"] # example\nbase_url = \"https://example.com/v1\"\n" })
+                "forced_login_method = \"api\"\n", "model_providers.example.name = \"example\"\n" })
             {
                 bool routingOnly = entry.StartsWith("chatgpt_base_url") || entry.StartsWith("openai_base_url") || entry.StartsWith("[");
                 if (!official && routingOnly) continue;
@@ -268,16 +267,60 @@ internal static class ProviderSyncTests
         }
         foreach (bool official in new[] { false, true })
         {
-            File.WriteAllText(config, "forced_login_method = \"api\"\ncli_auth_credentials_store = \"file\" # example keep\n" + baseline, Utf8);
+            File.WriteAllText(config, "cli_auth_credentials_store = \"file\" # example keep\n" + baseline, Utf8);
             if (official) Call(store, "SaveOfficial"); else Call(store, "Save", customData);
             string updated = File.ReadAllText(config);
-            Check(!updated.Contains("forced_login_method") && updated.Contains("cli_auth_credentials_store = \"file\" # example keep"),
-                "Legacy restriction not removed or file storage changed");
+            Check(updated.Contains("cli_auth_credentials_store = \"file\" # example keep"), "File storage changed");
         }
         File.WriteAllText(config, "chatgpt_base_url = \"https://example.com\"\n" + baseline, Utf8);
         Call(store, "Save", customData);
         Check(File.ReadAllText(config).Contains("chatgpt_base_url = \"https://example.com\""), "Unrelated routing field deleted");
-        Console.WriteLine("PASS: legacy restriction cleanup, existing file backend preserved, conflicting routing/storage rejected without file changes");
+        Console.WriteLine("PASS: existing file backend preserved, conflicting routing/storage rejected without file changes");
+    }
+
+    private static void TestProviderProfiles(string root, object customData)
+    {
+        UseFixture(root, "provider-profiles");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        Call(store, "Save", customData);
+        string config = Path.Combine(fixture, "config.toml");
+        string profiles = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string extras = "[model_providers.custom.http_headers]\nexample = 'value#example'\n" +
+            "[model_providers.\"openai\"] # example\nbase_url = \"https://example.com/v1\"\n" +
+            "['model_providers'.example]\nunknown = '''\n[not_a_table]\nexample\n'''\n" +
+            "description = \"literal ''' example\"\n" +
+            "array = [\n[\"example\"],\n[\"model_providers\"],\n]\n";
+        string unrelated = "[features]\nexample = true\n";
+        string initial = File.ReadAllText(config).Replace("[model_providers.custom]", "[model_providers.\"custom\"] # example") + extras + unrelated;
+        File.WriteAllText(config, initial, Utf8);
+        Call(store, "SaveOfficial");
+        Check(!File.ReadAllText(config).Contains("model_providers") && File.ReadAllText(config).Contains(unrelated.Replace("\n", Environment.NewLine)),
+            "Official config retained provider tables or lost unrelated tables");
+        var saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
+        Check(((string)saved["model_providers_toml"]).Contains(extras), "Provider snapshot lost unknown/nested/multiline values");
+        string snapshot = (string)saved["model_providers_toml"];
+        Call(store, "SaveOfficial");
+        saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
+        Check((string)saved["model_providers_toml"] == snapshot, "Repeated official save erased providers");
+        object loaded = Call(store, "Load");
+        Check((string)Field(loaded, "BaseUrl") == "https://example.com/v1" && (string)Field(loaded, "ProviderName") == "example",
+            "Official mode failed to populate custom form from snapshot");
+        Call(store, "Save", loaded);
+        string restored = File.ReadAllText(config);
+        Check(restored.Contains(extras.Replace("\n", Environment.NewLine)) &&
+            !restored.Contains("[model_providers.custom]"), "Restore lost providers or duplicated quoted custom table");
+        Call(store, "Save", loaded);
+        Check(File.ReadAllText(config) == restored, "Repeated custom save not idempotent");
+        string auth = Path.Combine(fixture, "auth.json");
+        string beforeAuth = File.ReadAllText(auth), beforeProfiles = File.ReadAllText(profiles);
+        bool failed = false;
+        using (var locked = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "SaveOfficial"); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && File.ReadAllText(config) == restored && File.ReadAllText(auth) == beforeAuth &&
+            File.ReadAllText(profiles) == beforeProfiles, "Provider removal failure did not restore all files");
+        Console.WriteLine("PASS: complete provider snapshot, clean official config, repeated saves, form restore, quoted/nested/multiline tables and rollback");
     }
 
     [STAThread]
@@ -334,6 +377,7 @@ internal static class ProviderSyncTests
             Console.WriteLine("PASS: saving configuration does not repair history");
             TestClientStore();
             TestOAuthModes(root, data);
+            TestProviderProfiles(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";

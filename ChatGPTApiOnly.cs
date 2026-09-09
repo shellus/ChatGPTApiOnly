@@ -857,7 +857,6 @@ internal static class ChatGPTApiOnly
         internal string Model;
         internal string ReasoningEffort;
         internal string AuthMode;
-        internal bool AuthModePresent;
         internal string WireApi;
         internal bool? RequiresOpenAiAuth;
         internal bool ConfigReadable;
@@ -865,7 +864,6 @@ internal static class ChatGPTApiOnly
         internal bool OfficialMode;
         internal bool HasOfficialCredentials;
         internal bool ActiveOfficialCredentials;
-        internal string ForcedLoginMethod;
         internal string CredentialsStore;
         internal string ProfileError;
 
@@ -875,10 +873,8 @@ internal static class ChatGPTApiOnly
             {
                 if (!String.IsNullOrEmpty(ProfileError)) return false;
                 if (!String.IsNullOrEmpty(CredentialsStore) && CredentialsStore != "file") return false;
-                if (!String.IsNullOrEmpty(ForcedLoginMethod)) return false;
                 if (OfficialMode) return ConfigReadable && AuthReadable && AuthMode == "chatgpt" && ActiveOfficialCredentials;
-                bool authModeValid = !AuthModePresent ||
-                    String.Equals(AuthMode, "apikey", StringComparison.OrdinalIgnoreCase);
+                bool authModeValid = String.Equals(AuthMode, "apikey", StringComparison.OrdinalIgnoreCase);
                 return ConfigReadable && AuthReadable &&
                     !String.IsNullOrWhiteSpace(ProviderName) &&
                     ConfigStore.IsValidBaseUrl(BaseUrl) &&
@@ -920,6 +916,16 @@ internal static class ChatGPTApiOnly
             catch (Exception exception) { data.ProfileError = exception.Message; return data; }
             if (data.OfficialMode)
             {
+                string savedProviders = ProfileString(profiles, "model_providers_toml");
+                if (!String.IsNullOrWhiteSpace(savedProviders))
+                {
+                    var saved = new ConfigData();
+                    LoadTomlText(saved, savedProviders);
+                    data.ProviderName = saved.ProviderName;
+                    data.BaseUrl = saved.BaseUrl;
+                    data.WireApi = saved.WireApi;
+                    data.RequiresOpenAiAuth = saved.RequiresOpenAiAuth;
+                }
                 data.Model = ProfileString(profiles, "custom_model");
                 data.ReasoningEffort = ProfileString(profiles, "custom_effort");
             }
@@ -954,7 +960,18 @@ internal static class ChatGPTApiOnly
             ValidateModeSwitch(false);
             Dictionary<string, object> profiles = CaptureProfiles();
             string existingToml = ReadText(ConfigPath) ?? String.Empty;
+            var current = new ConfigData();
+            LoadToml(current);
+            if (current.OfficialMode)
+            {
+                string activeProviders;
+                existingToml = SplitProviders(existingToml, out activeProviders).TrimEnd() + Environment.NewLine +
+                    (ProfileString(profiles, "model_providers_toml") ?? String.Empty);
+            }
             string updatedToml = UpdateToml(existingToml, data);
+            string updatedProviders;
+            SplitProviders(updatedToml, out updatedProviders);
+            profiles["model_providers_toml"] = updatedProviders;
             var auth = new Dictionary<string, object>();
             auth["auth_mode"] = "apikey";
             auth["OPENAI_API_KEY"] = data.ApiKey;
@@ -999,6 +1016,10 @@ internal static class ChatGPTApiOnly
             var profiles = ReadObject(ProfilesPath);
             var current = new ConfigData();
             LoadToml(current);
+            string providers;
+            SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
+            if (!current.OfficialMode || !String.IsNullOrWhiteSpace(providers))
+                profiles["model_providers_toml"] = providers;
             string authText = ReadText(AuthPath);
             var auth = ParseObject(authText);
             // Credentials and routing can differ in existing installations.
@@ -1024,9 +1045,10 @@ internal static class ChatGPTApiOnly
         {
             ValidateModeSwitch(true);
             var profiles = CaptureProfiles();
-            var lines = new List<string>(Regex.Split(ReadText(ConfigPath) ?? String.Empty, "\\r?\\n"));
+            string providers;
+            string cleanToml = SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
+            var lines = new List<string>(Regex.Split(cleanToml, "\\r?\\n"));
             SetTopLevel(lines, "model_provider", QuoteToml("openai"));
-            RemoveTopLevel(lines, "forced_login_method");
             RemoveTopLevel(lines, "model");
             RemoveTopLevel(lines, "model_reasoning_effort");
             string model = ProfileString(profiles, "official_model");
@@ -1048,24 +1070,111 @@ internal static class ChatGPTApiOnly
 
         internal static void ValidateModeSwitch(bool official)
         {
-            string conflict = GetModeConflict(ReadText(ConfigPath) ?? String.Empty, official);
+            string text = ReadText(ConfigPath) ?? String.Empty;
+            string providers;
+            if (official) text = SplitProviders(text, out providers);
+            string conflict = GetModeConflict(text, official);
             if (conflict != null)
                 throw new InvalidOperationException("\u914d\u7f6e\u51b2\u7a81\uff1a" + conflict +
                     "\u3002\u8bf7\u5148\u6838\u5bf9 config.toml\uff1b\u672a\u4fee\u6539\u914d\u7f6e\u6216\u51ed\u8bc1\u3002");
         }
 
+        // Keep provider tables verbatim, including unknown keys and nested tables.
+        // Inline/dotted root assignments remain conflicts rather than being partially rewritten.
+        private static string SplitProviders(string toml, out string providers)
+        {
+            var remaining = new StringBuilder();
+            var saved = new StringBuilder();
+            bool inProviders = false;
+            string[] syntax = TomlSyntaxLines(toml);
+            int lineIndex = 0;
+            foreach (Match match in Regex.Matches(toml, "[^\\n]*\\n|[^\\n]+$"))
+            {
+                string raw = match.Value;
+                string line = syntax[lineIndex++].Trim();
+                if (line.StartsWith("["))
+                {
+                    inProviders = IsProviderTable(line);
+                }
+                if (inProviders) saved.Append(raw); else remaining.Append(raw);
+            }
+            providers = saved.ToString();
+            return remaining.ToString();
+        }
+
+        private static bool IsProviderTable(string line)
+        {
+            return Regex.IsMatch(line, "^\\[{1,2}\\s*(?:model_providers|\"model_providers\"|'model_providers')\\s*(?:\\.|\\])");
+        }
+
+        // Hide comments and multiline contents for structural edits, preserving line indices.
+        private static string[] TomlSyntaxLines(string toml)
+        {
+            char quote = '\0';
+            bool multiline = false;
+            int depth = 0;
+            var result = new List<string>();
+            foreach (string raw in Regex.Split(toml, "\\r?\\n"))
+            {
+                var line = new StringBuilder();
+                bool continuation = multiline || depth > 0;
+                bool value = depth > 0;
+                for (int i = 0; i < raw.Length; i++)
+                {
+                    char c = raw[i];
+                    if (quote == '\0')
+                    {
+                        if (c == '#') break;
+                        if (c == '=') value = true;
+                        if (value && (c == '[' || c == '{')) depth++;
+                        if (value && (c == ']' || c == '}')) depth--;
+                        if (c == '\'' || c == '"')
+                        {
+                            quote = c;
+                            multiline = i + 2 < raw.Length && raw[i + 1] == c && raw[i + 2] == c;
+                            if (multiline) { line.Append("\"\""); i += 2; continue; }
+                        }
+                        line.Append(c);
+                    }
+                    else
+                    {
+                        if (!multiline) line.Append(c);
+                        if (quote == '"' && c == '\\')
+                        {
+                            if (++i < raw.Length && !multiline) line.Append(raw[i]);
+                            continue;
+                        }
+                        if (c != quote) continue;
+                        if (multiline)
+                        {
+                            int end = i;
+                            while (end < raw.Length && raw[end] == quote) end++;
+                            if (end - i < 3) continue;
+                            i = end - 1;
+                        }
+                        quote = '\0';
+                        multiline = false;
+                    }
+                }
+                if (quote != '\0' && !multiline)
+                    throw new InvalidOperationException("config.toml contains an unterminated string.");
+                result.Add(continuation ? String.Empty : line.ToString());
+            }
+            if (multiline) throw new InvalidOperationException("config.toml contains an unterminated multiline string.");
+            return result.ToArray();
+        }
+
         private static string GetModeConflict(string toml, bool official)
         {
             bool topLevel = true;
-            foreach (string raw in Regex.Split(toml, "\\r?\\n"))
+            foreach (string raw in TomlSyntaxLines(toml))
             {
-                string line = StripTomlComment(raw).Trim();
+                string line = raw.Trim();
                 if (line.StartsWith("["))
                 {
                     topLevel = false;
-                    string section = Regex.Replace(line, "[\\s\"']", String.Empty);
-                    if (official && (section == "[model_providers.openai]" || section.StartsWith("[model_providers.openai.")))
-                        return "[model_providers.openai] \u53ef\u80fd\u8986\u76d6\u5b98\u65b9\u8def\u7531";
+                    if (official && IsProviderTable(line))
+                        return "model_providers tables must be saved outside the official configuration";
                     continue;
                 }
                 if (!topLevel) continue;
@@ -1073,10 +1182,13 @@ internal static class ChatGPTApiOnly
                 if (equals < 1) continue;
                 string key = line.Substring(0, equals).Trim().Trim('"', '\'');
                 string value = line.Substring(equals + 1).Trim();
+                if (key == "forced_login_method")
+                    return "forced_login_method restricts authentication; remove it before switching modes";
                 if (key == "cli_auth_credentials_store" && value != "\"file\"" && value != "'file'")
                     return "cli_auth_credentials_store \u4e0d\u662f file\uff0c\u65e0\u6cd5\u4ec5\u901a\u8fc7 auth.json \u5207\u6362\u51ed\u636e";
-                if (key == "profile" || (official && (key == "chatgpt_base_url" || key == "openai_base_url" ||
-                    key == "model_providers" || key.StartsWith("model_providers.openai."))))
+                if (key == "model_providers" || key.StartsWith("model_providers."))
+                    return "model_providers must use TOML table headers";
+                if (key == "profile" || (official && (key == "chatgpt_base_url" || key == "openai_base_url")))
                     return key + " \u53ef\u80fd\u8986\u76d6\u76ee\u6807\u8def\u7531";
             }
             return null;
@@ -1116,26 +1228,33 @@ internal static class ChatGPTApiOnly
 
         private static void RemoveTopLevel(List<string> lines, string key)
         {
-            int end = lines.FindIndex(delegate(string line) { return line.TrimStart().StartsWith("["); });
+            string[] syntax = TomlSyntaxLines(String.Join(Environment.NewLine, lines.ToArray()));
+            int end = Array.FindIndex(syntax, delegate(string line) { return line.TrimStart().StartsWith("["); });
             if (end < 0) end = lines.Count;
             for (int index = end - 1; index >= 0; index--)
-                if (Regex.IsMatch(lines[index], "^\\s*" + Regex.Escape(key) + "\\s*=")) lines.RemoveAt(index);
+                if (Regex.IsMatch(syntax[index], "^\\s*" + Regex.Escape(key) + "\\s*=")) lines.RemoveAt(index);
         }
 
         private static void LoadToml(ConfigData data)
         {
             data.OfficialMode = true;
             if (!File.Exists(ConfigPath)) return;
+            try { LoadTomlText(data, File.ReadAllText(ConfigPath, Encoding.UTF8)); }
+            catch { data.ConfigReadable = false; }
+        }
+
+        private static void LoadTomlText(ConfigData data, string text)
+        {
             try
             {
                 string section = String.Empty;
-                foreach (string rawLine in File.ReadAllLines(ConfigPath, Encoding.UTF8))
+                foreach (string rawLine in TomlSyntaxLines(text))
                 {
-                    string line = StripTomlComment(rawLine).Trim();
+                    string line = rawLine.Trim();
                     if (line.Length == 0) continue;
                     if (line.StartsWith("[") && line.EndsWith("]"))
                     {
-                        section = line.Substring(1, line.Length - 2).Trim();
+                        section = Regex.Replace(line.Substring(1, line.Length - 2), "[\\s\"']", String.Empty);
                         continue;
                     }
                     int equals = FindUnquotedEquals(line);
@@ -1145,7 +1264,6 @@ internal static class ChatGPTApiOnly
                     if (section.Length == 0)
                     {
                         if (key == "model_provider") data.OfficialMode = ParseTomlString(value) == "openai";
-                        else if (key == "forced_login_method") data.ForcedLoginMethod = ParseTomlString(value);
                         else if (key == "cli_auth_credentials_store") data.CredentialsStore = ParseTomlString(value);
                         else if (key == "model") data.Model = ParseTomlString(value);
                         else if (key == "model_reasoning_effort") data.ReasoningEffort = ParseTomlString(value);
@@ -1158,7 +1276,7 @@ internal static class ChatGPTApiOnly
                         else if (key == "requires_openai_auth") data.RequiresOpenAiAuth = ParseTomlBoolean(value);
                     }
                 }
-                string all = File.ReadAllText(ConfigPath, Encoding.UTF8);
+                string all = text;
                 if (GetModeConflict(all, data.OfficialMode) != null) { data.ConfigReadable = false; return; }
                 if (data.OfficialMode)
                 {
@@ -1184,7 +1302,6 @@ internal static class ChatGPTApiOnly
                 if (auth.TryGetValue("OPENAI_API_KEY", out value)) data.ApiKey = value as string;
                 if (auth.TryGetValue("auth_mode", out value))
                 {
-                    data.AuthModePresent = true;
                     data.AuthMode = value as string;
                 }
                 data.AuthReadable = true;
@@ -1198,7 +1315,6 @@ internal static class ChatGPTApiOnly
         {
             var lines = new List<string>(Regex.Split(existing, "\\r?\\n"));
             SetTopLevel(lines, "model_provider", QuoteToml("custom"));
-            RemoveTopLevel(lines, "forced_login_method");
             SetTopLevel(lines, "model", QuoteToml(data.Model));
             SetTopLevel(lines, "model_reasoning_effort", QuoteToml(data.ReasoningEffort));
             SetSectionValue(lines, "model_providers.custom", "name", QuoteToml(data.ProviderName));
@@ -1211,18 +1327,22 @@ internal static class ChatGPTApiOnly
 
         private static void SetTopLevel(List<string> lines, string key, string value)
         {
-            int end = lines.FindIndex(delegate(string line) { return line.TrimStart().StartsWith("["); });
+            string[] syntax = TomlSyntaxLines(String.Join(Environment.NewLine, lines.ToArray()));
+            int end = Array.FindIndex(syntax, delegate(string line) { return line.TrimStart().StartsWith("["); });
             if (end < 0) end = lines.Count;
             int found = -1;
             for (int i = 0; i < end; i++)
-                if (Regex.IsMatch(lines[i], "^\\s*" + Regex.Escape(key) + "\\s*=")) { found = i; break; }
+                if (Regex.IsMatch(syntax[i], "^\\s*" + Regex.Escape(key) + "\\s*=")) { found = i; break; }
             string replacement = key + " = " + value;
             if (found >= 0) lines[found] = replacement; else lines.Insert(end, replacement);
         }
 
         private static void SetSectionValue(List<string> lines, string section, string key, string value)
         {
-            int start = lines.FindIndex(delegate(string line) { return line.Trim() == "[" + section + "]"; });
+            string[] syntax = TomlSyntaxLines(String.Join(Environment.NewLine, lines.ToArray()));
+            int start = Array.FindIndex(syntax, delegate(string line) {
+                return Regex.Replace(line, "[\\s\"']", String.Empty) == "[" + section + "]";
+            });
             if (start < 0)
             {
                 if (lines.Count > 0 && !String.IsNullOrWhiteSpace(lines[lines.Count - 1])) lines.Add(String.Empty);
@@ -1231,25 +1351,11 @@ internal static class ChatGPTApiOnly
                 return;
             }
             int end = start + 1;
-            while (end < lines.Count && !lines[end].TrimStart().StartsWith("[")) end++;
+            while (end < lines.Count && !syntax[end].TrimStart().StartsWith("[")) end++;
             for (int i = start + 1; i < end; i++)
-                if (Regex.IsMatch(lines[i], "^\\s*" + Regex.Escape(key) + "\\s*="))
+                if (Regex.IsMatch(syntax[i], "^\\s*" + Regex.Escape(key) + "\\s*="))
                 { lines[i] = key + " = " + value; return; }
             lines.Insert(end, key + " = " + value);
-        }
-
-        private static string StripTomlComment(string line)
-        {
-            bool quoted = false; bool escaped = false;
-            for (int i = 0; i < line.Length; i++)
-            {
-                char c = line[i];
-                if (escaped) { escaped = false; continue; }
-                if (quoted && c == '\\') { escaped = true; continue; }
-                if (c == '"') quoted = !quoted;
-                else if (c == '#' && !quoted) return line.Substring(0, i);
-            }
-            return line;
         }
 
         private static int FindUnquotedEquals(string line)
@@ -1265,6 +1371,8 @@ internal static class ChatGPTApiOnly
 
         private static string ParseTomlString(string value)
         {
+            if (value.Length >= 2 && value[0] == '\'' && value[value.Length - 1] == '\'')
+                return value.Substring(1, value.Length - 2);
             if (value.Length < 2 || value[0] != '"' || value[value.Length - 1] != '"') return null;
             string inner = value.Substring(1, value.Length - 2);
             return Regex.Unescape(inner);
@@ -1527,8 +1635,8 @@ internal static class ChatGPTApiOnly
                     }
                 }
             }
-            string legacy = Path.Combine(codexHome, "state_5.sqlite");
-            if (File.Exists(legacy) && DatabaseHasProviderColumn(legacy)) paths.Add(legacy);
+            string stateDatabase = Path.Combine(codexHome, "state_5.sqlite");
+            if (File.Exists(stateDatabase) && DatabaseHasProviderColumn(stateDatabase)) paths.Add(stateDatabase);
             return paths;
         }
 

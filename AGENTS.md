@@ -14,7 +14,9 @@
 - 模式切换更新 `config.toml`、`auth.json` 与本机 `launcher-profiles/modes.json`；切换 Tab 不落盘，保存或切换模式不得隐式修复历史对话。
 - 官方模式由官方客户端登录及刷新 OAuth 凭证，启动时不得携带域名阻断或自定义 API 环境变量。仅凭本地凭证存在不得声称账号有效。
 - 切换前保留当前凭证及各模式模型设置，官方退出登录后不得恢复旧令牌。多文件保存失败必须尝试恢复原状态并阻止启动。
-- 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；应用时清理旧版限制。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
+- 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
+- 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`，从活动配置移除；自定义模式恢复片段后更新表单字段。保留未知字段、其他提供者及嵌套表，重复保存不得清空快照。
+- 数据格式变更只做一次性迁移，不在程序中保留旧版本兼容分支或升级测试。
 - 不静默删除 profile 或路由覆盖配置；发现与目标模式冲突时，在停止客户端及落盘前提示并阻止切换。
 - 历史对话修复只能由“修复对话”按钮显式触发。进度必须来自真实工作量，并以临时 `n/total` 进度区展示。
 - 修改 rollout 或 SQLite 前必须创建备份；SQLite 更新使用事务，失败时恢复已改写的 rollout 并阻止误报成功。
