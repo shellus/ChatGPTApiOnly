@@ -296,12 +296,12 @@ internal static class ProviderSyncTests
         Call(store, "SaveOfficial", String.Empty);
         Check(!File.ReadAllText(config).Contains("model_providers") && File.ReadAllText(config).Contains(unrelated.Replace("\n", Environment.NewLine)),
             "Official config retained provider tables or lost unrelated tables");
-        var saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
-        Check(((string)saved["model_providers_toml"]).Contains(extras), "Provider snapshot lost unknown/nested/multiline values");
-        string snapshot = (string)saved["model_providers_toml"];
+        var saved = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        Check(((string)Call(store, "SelectedValue", saved, "model_providers_toml")).Contains(extras), "Provider snapshot lost unknown/nested/multiline values");
+        string snapshot = (string)Call(store, "SelectedValue", saved, "model_providers_toml");
         Call(store, "SaveOfficial", String.Empty);
-        saved = new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(profiles));
-        Check((string)saved["model_providers_toml"] == snapshot, "Repeated official save erased providers");
+        saved = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        Check((string)Call(store, "SelectedValue", saved, "model_providers_toml") == snapshot, "Repeated official save erased providers");
         object loaded = Call(store, "Load");
         Check((string)Field(loaded, "BaseUrl") == "https://example.com/v1" && (string)Field(loaded, "ProviderName") == "example",
             "Official mode failed to populate custom form from snapshot");
@@ -353,7 +353,7 @@ internal static class ProviderSyncTests
                 File.ReadAllText(profiles) == originalProfiles, "Invalid proxy changed mode files: " + invalid);
         }
         bool failed = false;
-        using (var locked = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var locked = new FileStream(profiles, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             try { Call(store, "SaveOfficial", "http://localhost:17891"); } catch (TargetInvocationException) { failed = true; }
         }
@@ -372,6 +372,110 @@ internal static class ProviderSyncTests
         Check(start.Arguments == String.Empty && start.EnvironmentVariables["HTTPS_PROXY"] == Environment.GetEnvironmentVariable("HTTPS_PROXY"),
             "Empty proxy still injected launch settings");
         Console.WriteLine("PASS: scoped Chromium/backend/Node proxy, parent environment unchanged, validation, mode persistence, rollback and disabling");
+    }
+
+    private static void TestProfileLibrary(string root)
+    {
+        UseFixture(root, "profile-library");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        var profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        string first = (string)Call(store, "AddProfile", profiles, false, "Example API", null);
+        var selected = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "custom_providers");
+        selected["custom_key"] = "example-key";
+        selected["model_providers_toml"] = "[model_providers.custom]\nunknown = 'example'\n";
+        string second = (string)Call(store, "AddProfile", profiles, false, "Example copy", first);
+        var copy = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "custom_providers");
+        Check(first != second && (string)copy["custom_key"] == "example-key" &&
+            (string)copy["model_providers_toml"] == (string)selected["model_providers_toml"], "API copy incomplete");
+        copy["custom_key"] = "example-copy-key";
+        Check((string)selected["custom_key"] == "example-key", "Copy shares mutable state with source");
+        Check((string)Call(store, "DeleteProfile", profiles, false, second) == first, "Deleting selected profile did not choose next");
+        Check((string)Call(store, "DeleteProfile", profiles, false, first) == String.Empty, "Last deletion left dangling selection");
+        string account = (string)Call(store, "AddProfile", profiles, true, "Example account", null);
+        Check(account.Length > 0 && ((object[])profiles["official_accounts"]).Length == 1, "Unlogged account cannot be created");
+        string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"email\":\"example@example.com\",\"name\":\"Example User\"}"))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        string auth = "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"account_id\":\"example-account\",\"id_token\":\"example." + payload + ".example\"}}";
+        var identity = (Dictionary<string, object>)Call(store, "AccountIdentity", auth);
+        Check((string)identity["account_id"] == "example-account" && (string)identity["email"] == "example@example.com" &&
+            (string)identity["account_name"] == "Example User", "Account identification failed");
+        identity = (Dictionary<string, object>)Call(store, "AccountIdentity", auth.Replace(payload, "invalid!"));
+        Check((string)identity["account_id"] == "example-account" && !identity.ContainsKey("email"), "Malformed JWT lost stable identity");
+        Check(!File.Exists(Path.Combine(fixture, "auth.json")) && !File.Exists(Path.Combine(fixture, "config.toml")) &&
+            !File.Exists(Path.Combine(fixture, "launcher-profiles", "modes.json")), "Draft operations wrote active files");
+        Console.WriteLine("PASS: profile draft add/copy/delete, independent keys, empty selection, account identity and read-only drafts");
+        // Switching official entries must not rewrite model settings or restore a logged-out entry.
+        File.WriteAllText(Path.Combine(fixture, "config.toml"), "model_provider = \"openai\"\nmodel = \"example-official\"\n", Utf8);
+        var firstAccount = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "official_accounts");
+        firstAccount["official_auth"] = "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"account_id\":\"example-first\",\"access_token\":\"example-first-access\",\"refresh_token\":\"example-first-refresh\"}}";
+        string secondAccount = (string)Call(store, "AddProfile", profiles, true, "Example second", null);
+        var secondEntry = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "official_accounts");
+        secondEntry["official_auth"] = ((string)firstAccount["official_auth"]).Replace("example-first", "example-second");
+        string configBefore = File.ReadAllText(Path.Combine(fixture, "config.toml"));
+        DateTime configTimestamp = File.GetLastWriteTimeUtc(Path.Combine(fixture, "config.toml"));
+        Call(store, "ApplyProfiles", profiles, true, account);
+        Check(File.ReadAllText(Path.Combine(fixture, "auth.json")).Contains("example-first-access"), "First account not activated");
+        profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        File.WriteAllText(Path.Combine(fixture, "auth.json"), ((string)firstAccount["official_auth"]).Replace("example-first-refresh", "example-refreshed"), Utf8);
+        Call(store, "ApplyProfiles", profiles, true, secondAccount);
+        profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        Check(File.ReadAllText(Path.Combine(fixture, "auth.json")).Contains("example-second-access") &&
+            File.ReadAllText(Path.Combine(fixture, "config.toml")) == configBefore, "Official account switch altered routing/model or wrong credentials");
+        Check(File.GetLastWriteTimeUtc(Path.Combine(fixture, "config.toml")) == configTimestamp,
+            "Official account switch rewrote unchanged config file");
+        Call(store, "ApplyProfiles", profiles, true, account);
+        Check(File.ReadAllText(Path.Combine(fixture, "auth.json")).Contains("example-refreshed"), "Refresh token was not retained across account switch");
+        profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        File.Delete(Path.Combine(fixture, "auth.json"));
+        Call(store, "ApplyProfiles", profiles, true, secondAccount);
+        profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        Call(store, "ApplyProfiles", profiles, true, account);
+        Check(!File.ReadAllText(Path.Combine(fixture, "auth.json")).Contains("example-first-access"), "Logged-out account resurrected");
+        Console.WriteLine("PASS: two official accounts, refreshed credentials, unchanged official config and logout invalidation");
+
+        UseFixture(root, "multi-api-transactions");
+        profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        first = (string)Call(store, "AddProfile", profiles, false, "Example first", null);
+        selected = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "custom_providers");
+        selected["custom_key"] = "example-first-key";
+        selected["custom_model"] = "example-first-model";
+        selected["custom_effort"] = "high";
+        selected["model_providers_toml"] = "[model_providers.custom]\nname = 'example-first'\nbase_url = 'https://example.com/v1'\nunknown = 'example-preserved'\n";
+        Call(store, "ApplyProfiles", profiles, false, first);
+        profiles = (Dictionary<string, object>)Call(store, "ReadEditableProfiles");
+        second = (string)Call(store, "AddProfile", profiles, false, "Example second", first);
+        copy = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "custom_providers");
+        copy["custom_key"] = "example-second-key";
+        copy["custom_model"] = "example-second-model";
+        string history = Rollout("sessions", "example-history", "example-original");
+        string historyBefore = File.ReadAllText(history);
+        string configPath = Path.Combine(fixture, "config.toml");
+        string authPath = Path.Combine(fixture, "auth.json");
+        string profilesPath = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string[] before = { File.ReadAllText(configPath), File.ReadAllText(authPath), File.ReadAllText(profilesPath) };
+        Call(store, "ValidateProfiles", profiles, false, second);
+        Check(File.ReadAllText(configPath) == before[0] && File.ReadAllText(authPath) == before[1] &&
+            File.ReadAllText(profilesPath) == before[2], "Preflight validation wrote files");
+        using (var locked = new FileStream(configPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            bool failed = false;
+            try { Call(store, "ApplyProfiles", profiles, false, second); } catch (TargetInvocationException) { failed = true; }
+            Check(failed, "Locked configuration did not fail");
+        }
+        Check(File.ReadAllText(configPath) == before[0] && File.ReadAllText(authPath) == before[1] &&
+            File.ReadAllText(profilesPath) == before[2], "Multi-profile transaction failed to restore selections and credentials");
+        Call(store, "ApplyProfiles", profiles, false, second);
+        Check(File.ReadAllText(authPath).Contains("example-second-key") && File.ReadAllText(configPath).Contains("example-second-model"), "Second API not activated");
+        profiles = (Dictionary<string, object>)Call(store, "ReadEditableProfiles");
+        Call(store, "ApplyProfiles", profiles, false, first);
+        Check(File.ReadAllText(authPath).Contains("example-first-key") && File.ReadAllText(configPath).Contains("example-first-model") &&
+            File.ReadAllText(configPath).Contains("example-preserved"), "API switching lost independent settings or unknown TOML");
+        profiles = (Dictionary<string, object>)Call(store, "ReadEditableProfiles");
+        Call(store, "DeleteProfile", profiles, false, first);
+        Call(store, "ApplyProfiles", profiles, false, second);
+        Check(File.ReadAllText(authPath).Contains("example-second-key") && File.ReadAllText(history) == historyBefore,
+            "Deleting active API did not switch or touched history");
+        Console.WriteLine("PASS: independent API switching, preflight without writes, transaction rollback, active deletion and history preservation");
     }
 
     [STAThread]
@@ -430,6 +534,7 @@ internal static class ProviderSyncTests
             TestOAuthModes(root, data);
             TestProviderProfiles(root, data);
             TestOfficialProxy(root, data);
+            TestProfileLibrary(root);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";

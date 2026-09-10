@@ -486,6 +486,11 @@ internal static class ChatGPTApiOnly
         private readonly TabPage officialTab;
         private readonly TabPage customTab;
         private readonly TextBox officialProxyTextBox;
+        private readonly ComboBox officialAccountComboBox;
+        private readonly ComboBox customProviderComboBox;
+        private Dictionary<string, object> profileDraft;
+        private bool updatingProfileSelectors;
+        private readonly Label accountStatus;
 
         internal ConfigForm(ConfigData config)
         {
@@ -607,9 +612,33 @@ internal static class ChatGPTApiOnly
             Controls.Add(updatesButton);
 
             // Reuse the existing API form inside its tab; shared actions stay outside.
-            modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 330), TabIndex = 0 };
+            modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 390), TabIndex = 0 };
             officialTab = new TabPage("\u5b98\u65b9\u8d26\u53f7") { UseVisualStyleBackColor = true };
             customTab = new TabPage("\u81ea\u5b9a\u4e49 API") { UseVisualStyleBackColor = true };
+            profileDraft = ConfigStore.ReadEditableProfiles();
+            officialAccountComboBox = new ComboBox { Location = new Point(20, 8), Size = new Size(310, 23), DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "官方账号配置" };
+            customProviderComboBox = new ComboBox { Location = new Point(20, 8), Size = new Size(300, 23), DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "自定义 API 配置" };
+            officialTab.Controls.Add(officialAccountComboBox);
+            customTab.Controls.Add(customProviderComboBox);
+            var addOfficial = new Button { Location = new Point(338, 8), Size = new Size(78, 24), Text = "添加账号" };
+            var addCustom = new Button { Location = new Point(328, 8), Size = new Size(78, 24), Text = "添加" };
+            var copyCustom = new Button { Location = new Point(412, 8), Size = new Size(78, 24), Text = "复制" };
+            var deleteCustom = new Button { Location = new Point(20, 38), Size = new Size(78, 24), Text = "删除" };
+            officialTab.Controls.Add(addOfficial); customTab.Controls.Add(addCustom); customTab.Controls.Add(copyCustom); customTab.Controls.Add(deleteCustom);
+            PopulateProfileSelectors();
+            addOfficial.Click += delegate { AddProfileFromUi(true, null); };
+            addCustom.Click += delegate { AddProfileFromUi(false, null); };
+            copyCustom.Click += delegate { AddProfileFromUi(false, SelectedProfileId(false)); };
+            deleteCustom.Click += delegate { DeleteProfileFromUi(false); };
+            var deleteOfficial = new Button { Location = new Point(20, 38), Size = new Size(78, 24), Text = "删除" };
+            var renameOfficial = new Button { Location = new Point(104, 38), Size = new Size(78, 24), Text = "重命名" };
+            var renameCustom = new Button { Location = new Point(104, 38), Size = new Size(78, 24), Text = "重命名" };
+            officialTab.Controls.Add(deleteOfficial);
+            officialTab.Controls.Add(renameOfficial);
+            customTab.Controls.Add(renameCustom);
+            deleteOfficial.Click += delegate { DeleteProfileFromUi(true); };
+            renameOfficial.Click += delegate { RenameProfileFromUi(true); };
+            renameCustom.Click += delegate { RenameProfileFromUi(false); };
             modeTabs.TabPages.Add(officialTab);
             modeTabs.TabPages.Add(customTab);
             var fields = new List<Control>();
@@ -617,40 +646,51 @@ internal static class ChatGPTApiOnly
                 if (control.Top >= 96 && control.Top < 370) fields.Add(control);
             foreach (Control control in fields)
             {
-                control.Location = new Point(control.Left - 20, control.Top - 78);
+                control.Location = new Point(control.Left - 20, control.Top - 18);
                 customTab.Controls.Add(control);
             }
-            var status = new Label
+            accountStatus = new Label
             {
-                Location = new Point(20, 24), Size = new Size(480, 42),
+                Location = new Point(20, 74), Size = new Size(480, 32),
                 Text = config.HasOfficialCredentials
                     ? "\u68c0\u6d4b\u5230\u5b98\u65b9\u767b\u5f55\u51ed\u8bc1"
                     : "\u5c1a\u672a\u68c0\u6d4b\u5230\u5b98\u65b9\u767b\u5f55\u51ed\u8bc1",
                 Font = new Font(Font, FontStyle.Bold)
             };
-            officialTab.Controls.Add(status);
+            officialTab.Controls.Add(accountStatus);
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 66), Size = new Size(480, 78),
-                Text = "点击下方“应用并启动”，在官方客户端中登录或切换账号。\r\n" +
-                    "本地凭证存在不代表登录仍然有效。\r\n\r\n" +
+                Location = new Point(20, 112), Size = new Size(480, 78),
+                Text = "添加账号后点击“应用并启动”，在官方客户端完成登录。\r\n" +
+                    "下次打开连接设置时自动识别并收录登录账号。\r\n\r\n" +
                     "切换模式会保留另一种模式的配置，不会修改历史对话。"
             });
+            officialAccountComboBox.SelectedIndexChanged += delegate {
+                if (!updatingProfileSelectors) profileDraft["selected_official"] = SelectedProfileId(true) ?? String.Empty;
+                UpdateAccountStatus();
+            };
+            customProviderComboBox.SelectedIndexChanged += delegate
+            {
+                if (updatingProfileSelectors) return;
+                StoreCustomFields();
+                profileDraft["selected_custom"] = SelectedProfileId(false) ?? String.Empty;
+                LoadCustomProfileIntoFields();
+            };
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 162), AutoSize = true,
+                Location = new Point(20, 220), AutoSize = true,
                 Text = "HTTP 代理（可选）"
             });
             officialProxyTextBox = new TextBox
             {
-                Location = new Point(20, 186), Size = new Size(480, 23),
+                Location = new Point(20, 244), Size = new Size(480, 23),
                 Text = config.OfficialProxyUrl ?? String.Empty,
                 AccessibleName = "官方账号 HTTP 代理", TabIndex = 0
             };
             officialTab.Controls.Add(officialProxyTextBox);
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 222), Size = new Size(480, 66),
+                Location = new Point(20, 278), Size = new Size(480, 66),
                 Text = "地址格式：http://主机:端口；留空不设置独立代理。\r\n" +
                     "仅作用于官方客户端及其子进程，不修改系统代理。\r\n" +
                     "本地代理软件需保持运行。"
@@ -665,11 +705,12 @@ internal static class ChatGPTApiOnly
             saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
             modeTabs.SelectedTab = config.OfficialMode || config.AuthMode == "chatgpt" ? officialTab : customTab;
             Controls.Add(modeTabs);
-            repairProgressCaption.Top += 40;
-            repairProgressBar.Top += 40;
-            repairProgressLabel.Top += 40;
-            SetFooterTop(414);
-            ClientSize = new Size(572, 450);
+            repairProgressCaption.Top += 100;
+            repairProgressBar.Top += 100;
+            repairProgressLabel.Top += 100;
+            SetFooterTop(474);
+            ClientSize = new Size(572, 510);
+            UpdateAccountStatus();
         }
 
         private async void RepairButtonOnClick(object sender, EventArgs e)
@@ -736,8 +777,8 @@ internal static class ChatGPTApiOnly
         private void ShowRepairProgress()
         {
             repairProgressCaption.Text = "\u626b\u63cf\u5bf9\u8bdd";
-            SetFooterTop(454);
-            ClientSize = new Size(572, 490);
+            SetFooterTop(514);
+            ClientSize = new Size(572, 550);
             repairProgressCaption.Visible = true;
             repairProgressBar.Visible = true;
             repairProgressLabel.Visible = true;
@@ -751,8 +792,8 @@ internal static class ChatGPTApiOnly
             repairProgressBar.Maximum = 1;
             repairProgressBar.Value = 0;
             repairProgressLabel.Text = String.Empty;
-            SetFooterTop(414);
-            ClientSize = new Size(572, 450);
+            SetFooterTop(474);
+            ClientSize = new Size(572, 510);
         }
 
         private void SetFooterTop(int top)
@@ -812,6 +853,120 @@ internal static class ChatGPTApiOnly
             Controls.Add(field);
         }
 
+        private string SelectedProfileId(bool official)
+        {
+            ComboBox box = official ? officialAccountComboBox : customProviderComboBox;
+            return box.SelectedItem == null ? null : ((ProfileChoice)box.SelectedItem).Id;
+        }
+
+        private void PopulateProfileSelectors()
+        {
+            updatingProfileSelectors = true;
+            try
+            {
+            officialAccountComboBox.Items.Clear(); customProviderComboBox.Items.Clear();
+            object value;
+            if (profileDraft.TryGetValue("official_accounts", out value)) foreach (object item in (object[])value) officialAccountComboBox.Items.Add(ProfileChoice.From((Dictionary<string, object>)item));
+            if (profileDraft.TryGetValue("custom_providers", out value)) foreach (object item in (object[])value) customProviderComboBox.Items.Add(ProfileChoice.From((Dictionary<string, object>)item));
+            string selected = profileDraft["selected_official"] as string;
+            for (int i = 0; i < officialAccountComboBox.Items.Count; i++) if (((ProfileChoice)officialAccountComboBox.Items[i]).Id == selected) officialAccountComboBox.SelectedIndex = i;
+            selected = profileDraft["selected_custom"] as string;
+            for (int i = 0; i < customProviderComboBox.Items.Count; i++) if (((ProfileChoice)customProviderComboBox.Items[i]).Id == selected) customProviderComboBox.SelectedIndex = i;
+            }
+            finally { updatingProfileSelectors = false; }
+            UpdateAccountStatus();
+        }
+
+        private void UpdateAccountStatus()
+        {
+            if (accountStatus == null) return;
+            var profile = ConfigStore.SelectedProfile(profileDraft, "official_accounts");
+            accountStatus.Text = profile == null ? "尚未添加账号，点击“添加账号”开始。" :
+                profile.ContainsKey("official_auth") ? "已保存本地登录凭据；有效性由官方客户端确认。" :
+                "此账号尚未登录或已退出，应用后在客户端登录。";
+        }
+
+        private void LoadCustomProfileIntoFields()
+        {
+            var item = ConfigStore.SelectedProfile(profileDraft, "custom_providers");
+            var data = item == null ? new ConfigData() : ConfigStore.ProfileData(item);
+            providerNameTextBox.Text = data.ProviderName ?? "custom";
+            baseUrlTextBox.Text = data.BaseUrl ?? String.Empty;
+            apiKeyTextBox.Text = data.ApiKey ?? String.Empty;
+            modelTextBox.Text = data.Model ?? String.Empty;
+            reasoningComboBox.Text = data.ReasoningEffort ?? "medium";
+        }
+
+        private void StoreCustomFields()
+        {
+            var item = ConfigStore.SelectedProfile(profileDraft, "custom_providers");
+            if (item == null) return;
+            ConfigStore.UpdateCustomDraft(item, new ConfigData {
+                ProviderName = providerNameTextBox.Text.Trim(), BaseUrl = baseUrlTextBox.Text.Trim(),
+                ApiKey = apiKeyTextBox.Text.Trim(), Model = modelTextBox.Text.Trim(),
+                ReasoningEffort = reasoningComboBox.Text.Trim()
+            });
+        }
+
+        private void AddProfileFromUi(bool official, string copyId)
+        {
+            string name = PromptText(official ? "账号名称" : "API 配置名称", official ? "官方账号" : "自定义 API");
+            if (name == null) return;
+            try { StoreCustomFields(); ConfigStore.AddProfile(profileDraft, official, name, copyId); PopulateProfileSelectors(); LoadCustomProfileIntoFields(); }
+            catch (Exception exception) { MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        private void DeleteProfileFromUi(bool official)
+        {
+            string id = SelectedProfileId(official); if (id == null) return;
+            try
+            {
+                StoreCustomFields();
+                ConfigStore.DeleteProfile(profileDraft, official, id);
+                PopulateProfileSelectors();
+                LoadCustomProfileIntoFields();
+                var next = ConfigStore.SelectedProfile(profileDraft, official ? "official_accounts" : "custom_providers");
+                MessageBox.Show(this, next == null ? "已从草稿删除最后一项配置。请添加配置，或选择另一种模式后应用。" :
+                    "已从草稿删除，自动选择“" + next["name"] + "”。点击应用并启动后保存。",
+                    "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception exception) { MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        private void RenameProfileFromUi(bool official)
+        {
+            var profile = ConfigStore.SelectedProfile(profileDraft, official ? "official_accounts" : "custom_providers");
+            if (profile == null) return;
+            string name = PromptText("配置名称", profile["name"] as string);
+            if (name == null) return;
+            profile["name"] = name;
+            PopulateProfileSelectors();
+        }
+
+        private static string PromptText(string title, string initial)
+        {
+            using (var form = new Form { Text = title, ClientSize = new Size(330, 105), StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false })
+            using (var input = new TextBox { Location = new Point(12, 12), Size = new Size(306, 23), Text = initial })
+            using (var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(166, 58), Size = new Size(72, 28) })
+            using (var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(246, 58), Size = new Size(72, 28) })
+            { form.Controls.Add(input); form.Controls.Add(ok); form.Controls.Add(cancel); form.AcceptButton = ok; form.CancelButton = cancel; return form.ShowDialog() == DialogResult.OK && !String.IsNullOrWhiteSpace(input.Text) ? input.Text.Trim() : null; }
+        }
+
+        private sealed class ProfileChoice
+        {
+            internal string Id; internal string Name;
+            public override string ToString() { return Name; }
+            internal static ProfileChoice From(Dictionary<string, object> profile)
+            {
+                string name = profile.ContainsKey("name") ? profile["name"] as string : "未命名配置";
+                string email = profile.ContainsKey("email") ? profile["email"] as string : null;
+                string accountName = profile.ContainsKey("account_name") ? profile["account_name"] as string : null;
+                string account = profile.ContainsKey("account_id") ? profile["account_id"] as string : null;
+                string detail = email ?? accountName ?? account;
+                return new ProfileChoice { Id = (string)profile["id"], Name = name + (String.IsNullOrEmpty(detail) || detail == name ? "" : " — " + detail) };
+            }
+        }
+
         private void SaveButtonOnClick(object sender, EventArgs e)
         {
             errors.Clear();
@@ -821,15 +976,22 @@ internal static class ChatGPTApiOnly
                 try
                 {
                     string proxy = ConfigStore.NormalizeOfficialProxyUrl(officialProxyTextBox.Text);
+                    if (SelectedProfileId(true) == null)
+                    {
+                        ConfigStore.AddProfile(profileDraft, true, "官方账号", null);
+                        PopulateProfileSelectors();
+                    }
                     stage = "校验模式切换";
-                    ConfigStore.ValidateModeSwitch(true);
+                    StoreCustomFields();
+                    profileDraft["official_proxy_url"] = proxy;
+                    ConfigStore.ValidateProfiles(profileDraft, true, SelectedProfileId(true));
                     string packageRoot;
                     stage = "查找 ChatGPT 安装";
                     FindLatestChatGptExecutable(out packageRoot);
                     stage = "停止旧 ChatGPT 进程";
                     StopPackagedChatGptProcesses(packageRoot, true);
                     stage = "保存官方配置";
-                    ConfigStore.SaveOfficial(proxy);
+                    ConfigStore.ApplyProfiles(profileDraft, true, SelectedProfileId(true));
                     DialogResult = DialogResult.OK;
                     Close();
                 }
@@ -873,11 +1035,14 @@ internal static class ChatGPTApiOnly
                 UseWaitCursor = true;
                 Refresh();
 
-                ConfigStore.ValidateModeSwitch(false);
+                if (SelectedProfileId(false) == null)
+                    ConfigStore.AddProfile(profileDraft, false, data.ProviderName, null);
+                ConfigStore.UpdateCustomDraft(ConfigStore.SelectedProfile(profileDraft, "custom_providers"), data);
+                ConfigStore.ValidateProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
                 string packageRoot;
                 FindLatestChatGptExecutable(out packageRoot);
                 StopPackagedChatGptProcesses(packageRoot, true);
-                ConfigStore.Save(data);
+                ConfigStore.ApplyProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
                 DialogResult = DialogResult.OK;
                 Close();
             }
@@ -969,12 +1134,12 @@ internal static class ChatGPTApiOnly
             LoadToml(data);
             LoadAuth(data);
             Dictionary<string, object> profiles;
-            try { profiles = ReadObject(ProfilesPath); }
+            try { profiles = ReadProfiles(); }
             catch (Exception exception) { data.ProfileError = exception.Message; return data; }
             data.OfficialProxyUrl = ProfileString(profiles, "official_proxy_url");
             if (data.OfficialMode)
             {
-                string savedProviders = ProfileString(profiles, "model_providers_toml");
+                string savedProviders = SelectedValue(profiles, "model_providers_toml");
                 if (!String.IsNullOrWhiteSpace(savedProviders))
                 {
                     var saved = new ConfigData();
@@ -984,17 +1149,17 @@ internal static class ChatGPTApiOnly
                     data.WireApi = saved.WireApi;
                     data.RequiresOpenAiAuth = saved.RequiresOpenAiAuth;
                 }
-                data.Model = ProfileString(profiles, "custom_model");
-                data.ReasoningEffort = ProfileString(profiles, "custom_effort");
+                data.Model = SelectedValue(profiles, "custom_model");
+                data.ReasoningEffort = SelectedValue(profiles, "custom_effort");
             }
             if (String.IsNullOrWhiteSpace(data.ApiKey))
-                data.ApiKey = ProfileString(profiles, "custom_key");
+                data.ApiKey = SelectedValue(profiles, "custom_key");
             if (!data.OfficialMode)
             {
                 try
                 {
                     data.HasOfficialCredentials = data.HasOfficialCredentials ||
-                        HasOfficialTokens(ParseObject(ProfileString(profiles, "official_auth")));
+                        HasOfficialTokens(ParseObject(SelectedValue(profiles, "official_auth")));
                 }
                 catch (Exception exception) { data.ProfileError = exception.Message; }
             }
@@ -1027,28 +1192,15 @@ internal static class ChatGPTApiOnly
 
         internal static void Save(ConfigData data)
         {
-            ValidateModeSwitch(false);
-            Dictionary<string, object> profiles = CaptureProfiles();
-            string existingToml = ReadText(ConfigPath) ?? String.Empty;
-            var current = new ConfigData();
-            LoadToml(current);
-            if (current.OfficialMode)
+            var profiles = ReadEditableProfiles();
+            var selected = SelectedProfile(profiles, "custom_providers");
+            if (selected == null)
             {
-                string activeProviders;
-                existingToml = SplitProviders(existingToml, out activeProviders).TrimEnd() + Environment.NewLine +
-                    (ProfileString(profiles, "model_providers_toml") ?? String.Empty);
+                AddProfile(profiles, false, data.ProviderName, null);
+                selected = SelectedProfile(profiles, "custom_providers");
             }
-            string updatedToml = UpdateToml(existingToml, data);
-            string updatedProviders;
-            SplitProviders(updatedToml, out updatedProviders);
-            profiles["model_providers_toml"] = updatedProviders;
-            var auth = new Dictionary<string, object>();
-            auth["auth_mode"] = "apikey";
-            auth["OPENAI_API_KEY"] = data.ApiKey;
-            profiles["custom_key"] = data.ApiKey;
-            profiles["custom_model"] = data.Model;
-            profiles["custom_effort"] = data.ReasoningEffort;
-            CommitMode(updatedToml, new JavaScriptSerializer().Serialize(auth), profiles);
+            UpdateCustomDraft(selected, data);
+            ApplyProfiles(profiles, false, ProfileString(selected, "id"));
         }
 
         private static string ReadText(string path)
@@ -1072,6 +1224,245 @@ internal static class ChatGPTApiOnly
             return values.TryGetValue(key, out value) ? value as string : null;
         }
 
+        private static string SelectedValue(Dictionary<string, object> values, string key)
+        {
+            Dictionary<string, object> selected = SelectedProfile(values, key.StartsWith("official_") ? "official_accounts" : "custom_providers");
+            return selected == null ? null : ProfileString(selected, key);
+        }
+
+        internal static Dictionary<string, object> SelectedProfile(Dictionary<string, object> values, string collection)
+        {
+            object listValue, selectedValue;
+            if (!values.TryGetValue(collection, out listValue) || !values.TryGetValue(collection == "official_accounts" ? "selected_official" : "selected_custom", out selectedValue)) return null;
+            string selectedId = selectedValue as string;
+            var list = listValue as object[];
+            if (list == null || String.IsNullOrWhiteSpace(selectedId)) return null;
+            foreach (object item in list)
+            {
+                var profile = item as Dictionary<string, object>;
+                object id;
+                if (profile != null && profile.TryGetValue("id", out id) && String.Equals(id as string, selectedId, StringComparison.Ordinal)) return profile;
+            }
+            return null;
+        }
+
+        private static void EnsureProfileSchema(Dictionary<string, object> values)
+        {
+            if (values.Count == 0)
+            {
+                values["official_accounts"] = new object[0];
+                values["custom_providers"] = new object[0];
+                values["selected_official"] = String.Empty;
+                values["selected_custom"] = String.Empty;
+            }
+            foreach (string collection in new[] { "official_accounts", "custom_providers" })
+            {
+                object list;
+                if (!values.TryGetValue(collection, out list) || !(list is object[]))
+                    throw new InvalidOperationException("modes.json 配置结构不正确，未修改配置。");
+                var ids = new HashSet<string>(StringComparer.Ordinal);
+                foreach (object item in (object[])list)
+                {
+                    var profile = item as Dictionary<string, object>;
+                    string id = profile == null ? null : ProfileString(profile, "id");
+                    if (String.IsNullOrWhiteSpace(id) || !ids.Add(id))
+                        throw new InvalidOperationException("配置 ID 缺失或重复。");
+                }
+                string selected = ProfileString(values, collection == "official_accounts" ? "selected_official" : "selected_custom");
+                if ((ids.Count == 0 && !String.IsNullOrEmpty(selected)) ||
+                    (ids.Count > 0 && (selected == null || !ids.Contains(selected))))
+                    throw new InvalidOperationException("选中的配置不存在。");
+            }
+        }
+
+        private static Dictionary<string, object> EnsureSelectedProfile(Dictionary<string, object> values, string collection, string id)
+        {
+            EnsureProfileSchema(values);
+            string selectedKey = collection == "official_accounts" ? "selected_official" : "selected_custom";
+            var list = new List<object>((object[])values[collection]);
+            foreach (object item in list)
+            {
+                var profile = item as Dictionary<string, object>; object existingId;
+                if (profile != null && profile.TryGetValue("id", out existingId) && String.Equals(existingId as string, id, StringComparison.Ordinal)) { values[selectedKey] = id; return profile; }
+            }
+            var created = new Dictionary<string, object>();
+            created["id"] = id;
+            created["name"] = collection == "official_accounts" ? "官方账号" : "自定义 API";
+            list.Add(created);
+            values[collection] = list.ToArray();
+            values[selectedKey] = id;
+            return created;
+        }
+
+        // JWT claims are display hints only; decoding is not authentication validation.
+        internal static Dictionary<string, object> AccountIdentity(string authText)
+        {
+            var identity = new Dictionary<string, object>();
+            var auth = ParseObject(authText);
+            object value;
+            var tokens = auth.TryGetValue("tokens", out value) ? value as Dictionary<string, object> : null;
+            if (tokens == null) return identity;
+            identity["account_id"] = ProfileString(tokens, "account_id");
+            string jwt = ProfileString(tokens, "id_token");
+            try
+            {
+                if (String.IsNullOrEmpty(jwt)) return identity;
+                string[] parts = jwt.Split('.');
+                if (parts.Length != 3) return identity;
+                string payload = parts[1].Replace('-', '+').Replace('_', '/');
+                payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
+                var claims = ParseObject(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
+                identity["email"] = ProfileString(claims, "email");
+                identity["account_name"] = ProfileString(claims, "name");
+            }
+            catch (FormatException) { }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            return identity;
+        }
+
+        internal static Dictionary<string, object> ReadProfiles()
+        {
+            var profiles = ReadObject(ProfilesPath);
+            EnsureProfileSchema(profiles);
+            return profiles;
+        }
+
+        internal static string AddProfile(Dictionary<string, object> profiles, bool official, string name, string copyId)
+        {
+            EnsureProfileSchema(profiles);
+            if (String.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("请输入配置名称。");
+            string collection = official ? "official_accounts" : "custom_providers";
+            Dictionary<string, object> copy = null;
+            if (copyId != null)
+            {
+                if (official) throw new InvalidOperationException("官方账号请通过登录添加。");
+                foreach (object item in (object[])profiles[collection])
+                {
+                    var candidate = (Dictionary<string, object>)item;
+                    if (ProfileString(candidate, "id") == copyId) copy = ParseObject(new JavaScriptSerializer().Serialize(candidate));
+                }
+                if (copy == null) throw new InvalidOperationException("待复制的配置不存在。");
+            }
+            string id = Guid.NewGuid().ToString("N");
+            var created = EnsureSelectedProfile(profiles, collection, id);
+            if (copy != null) foreach (var pair in copy) created[pair.Key] = pair.Value;
+            created["id"] = id;
+            created["name"] = name.Trim();
+            return id;
+        }
+
+        internal static string DeleteProfile(Dictionary<string, object> profiles, bool official, string id)
+        {
+            EnsureProfileSchema(profiles);
+            string collection = official ? "official_accounts" : "custom_providers";
+            string selection = official ? "selected_official" : "selected_custom";
+            var remaining = new List<object>();
+            bool found = false;
+            foreach (object item in (object[])profiles[collection])
+            {
+                var candidate = (Dictionary<string, object>)item;
+                if (ProfileString(candidate, "id") == id) found = true;
+                else remaining.Add(candidate);
+            }
+            if (!found) throw new InvalidOperationException("待删除的配置不存在。");
+            profiles[collection] = remaining.ToArray();
+            if (ProfileString(profiles, selection) == id)
+                profiles[selection] = remaining.Count == 0 ? String.Empty : ProfileString((Dictionary<string, object>)remaining[0], "id");
+            return ProfileString(profiles, selection);
+        }
+
+        internal static ConfigData ProfileData(Dictionary<string, object> profile)
+        {
+            var data = new ConfigData();
+            LoadTomlText(data, ProfileString(profile, "model_providers_toml") ?? String.Empty);
+            data.Model = ProfileString(profile, "custom_model");
+            data.ReasoningEffort = ProfileString(profile, "custom_effort");
+            data.ApiKey = ProfileString(profile, "custom_key");
+            data.OfficialMode = false;
+            data.AuthMode = "apikey";
+            return data;
+        }
+
+        internal static void UpdateCustomDraft(Dictionary<string, object> profile, ConfigData data)
+        {
+            profile["custom_key"] = data.ApiKey;
+            profile["custom_model"] = data.Model;
+            profile["custom_effort"] = data.ReasoningEffort;
+            string providers;
+            SplitProviders(UpdateToml(ProfileString(profile, "model_providers_toml") ?? String.Empty, data), out providers);
+            profile["model_providers_toml"] = providers;
+        }
+
+        internal static void ApplyProfiles(Dictionary<string, object> draft, bool official, string targetId)
+        {
+            PrepareProfiles(draft, official, targetId, true);
+        }
+
+        internal static void ValidateProfiles(Dictionary<string, object> draft, bool official, string targetId)
+        {
+            PrepareProfiles(draft, official, targetId, false);
+        }
+
+        private static void PrepareProfiles(Dictionary<string, object> draft, bool official, string targetId, bool commit)
+        {
+            // Work on a clone: failed writes must leave the form's draft available for retry.
+            var next = ParseObject(new JavaScriptSerializer().Serialize(draft));
+            EnsureProfileSchema(next);
+            string collection = official ? "official_accounts" : "custom_providers";
+            string selection = official ? "selected_official" : "selected_custom";
+            next[selection] = targetId;
+            EnsureProfileSchema(next);
+            var target = SelectedProfile(next, collection);
+            if (target == null) throw new InvalidOperationException("请先添加配置。");
+            string proxy = official ? NormalizeOfficialProxyUrl(ProfileString(next, "official_proxy_url")) : ProfileString(next, "official_proxy_url");
+            ValidateModeSwitch(official);
+            var current = new ConfigData();
+            LoadToml(current);
+            var saved = ReadProfiles();
+            CaptureOfficialSession(next, saved, true);
+            string originalToml = ReadText(ConfigPath) ?? String.Empty;
+            string providers;
+            string clean = SplitProviders(originalToml, out providers);
+            string toml, auth;
+            if (official)
+            {
+                next["official_proxy_url"] = proxy;
+                auth = ProfileString(target, "official_auth");
+                if (String.IsNullOrWhiteSpace(auth)) auth = "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null}";
+                var credentials = ParseObject(auth);
+                if (ProfileString(credentials, "auth_mode") != "chatgpt") throw new InvalidOperationException("官方账号凭据格式不正确。");
+                if (!String.IsNullOrWhiteSpace(ProfileString(credentials, "OPENAI_API_KEY")))
+                {
+                    credentials["OPENAI_API_KEY"] = null;
+                    auth = new JavaScriptSerializer().Serialize(credentials);
+                }
+                if (current.OfficialMode && String.IsNullOrWhiteSpace(providers)) toml = originalToml;
+                else
+                {
+                    var lines = new List<string>(Regex.Split(clean, "\\r?\\n"));
+                    SetTopLevel(lines, "model_provider", QuoteToml("openai"));
+                    RemoveTopLevel(lines, "model");
+                    RemoveTopLevel(lines, "model_reasoning_effort");
+                    string model = ProfileString(next, "official_model");
+                    string effort = ProfileString(next, "official_effort");
+                    if (!String.IsNullOrWhiteSpace(model)) SetTopLevel(lines, "model", QuoteToml(model));
+                    SetTopLevel(lines, "model_reasoning_effort", QuoteToml(String.IsNullOrWhiteSpace(effort) ? "medium" : effort));
+                    toml = String.Join(Environment.NewLine, lines.ToArray());
+                }
+            }
+            else
+            {
+                ConfigData data = ProfileData(target);
+                if (!IsValidBaseUrl(data.BaseUrl) || String.IsNullOrWhiteSpace(data.ApiKey) ||
+                    String.IsNullOrWhiteSpace(data.Model) || String.IsNullOrWhiteSpace(data.ProviderName))
+                    throw new InvalidOperationException("请填写完整的 API 配置后再应用。");
+                toml = UpdateToml(clean.TrimEnd() + Environment.NewLine + (ProfileString(target, "model_providers_toml") ?? String.Empty), data);
+                auth = new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "auth_mode", "apikey" }, { "OPENAI_API_KEY", data.ApiKey } });
+            }
+            if (commit) CommitMode(toml, auth, next);
+        }
+
         private static bool HasOfficialTokens(Dictionary<string, object> auth)
         {
             object tokensValue;
@@ -1081,63 +1472,91 @@ internal static class ChatGPTApiOnly
                 !String.IsNullOrWhiteSpace(ProfileString(tokens, "refresh_token"));
         }
 
-        private static Dictionary<string, object> CaptureProfiles()
+        // Refresh the in-memory library without writing on tab/list changes or cancellation.
+        internal static Dictionary<string, object> ReadEditableProfiles()
         {
-            var profiles = ReadObject(ProfilesPath);
+            var profiles = ReadProfiles();
+            CaptureOfficialSession(profiles, profiles, false);
             var current = new ConfigData();
             LoadToml(current);
-            string providers;
-            SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
-            if (!current.OfficialMode || !String.IsNullOrWhiteSpace(providers))
-                profiles["model_providers_toml"] = providers;
-            string authText = ReadText(AuthPath);
-            var auth = ParseObject(authText);
-            // Credentials and routing can differ in existing installations.
-            if (ProfileString(auth, "auth_mode") == "chatgpt") profiles["official_auth"] = authText;
-            else if (!String.IsNullOrWhiteSpace(ProfileString(auth, "OPENAI_API_KEY")))
-                profiles["custom_key"] = ProfileString(auth, "OPENAI_API_KEY");
-            if (current.OfficialMode)
+            if (!current.OfficialMode)
             {
-                profiles["official_model"] = current.Model;
-                profiles["official_effort"] = current.ReasoningEffort;
-                // A logout in the active official mode must not resurrect stale tokens.
-                if (ProfileString(auth, "auth_mode") != "chatgpt") profiles.Remove("official_auth");
-            }
-            else
-            {
-                profiles["custom_model"] = current.Model;
-                profiles["custom_effort"] = current.ReasoningEffort;
+                var selected = SelectedProfile(profiles, "custom_providers");
+                if (selected == null)
+                {
+                    AddProfile(profiles, false, current.ProviderName ?? "自定义 API", null);
+                    selected = SelectedProfile(profiles, "custom_providers");
+                }
+                string providers;
+                SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
+                selected["model_providers_toml"] = providers;
+                selected["custom_model"] = current.Model;
+                selected["custom_effort"] = current.ReasoningEffort;
+                var auth = ReadObject(AuthPath);
+                if (ProfileString(auth, "auth_mode") == "apikey")
+                    selected["custom_key"] = ProfileString(auth, "OPENAI_API_KEY");
             }
             return profiles;
         }
 
+        private static Dictionary<string, object> FindProfile(Dictionary<string, object> profiles, string collection, string key, string value)
+        {
+            if (String.IsNullOrEmpty(value)) return null;
+            foreach (object item in (object[])profiles[collection])
+            {
+                var entry = (Dictionary<string, object>)item;
+                if (ProfileString(entry, key) == value) return entry;
+            }
+            return null;
+        }
+
+        private static void CaptureOfficialSession(Dictionary<string, object> next, Dictionary<string, object> saved, bool applying)
+        {
+            var current = new ConfigData();
+            LoadToml(current);
+            var previous = SelectedProfile(saved, "official_accounts");
+            string latest = ReadText(AuthPath);
+            var auth = ParseObject(latest);
+            bool hasTokens = ProfileString(auth, "auth_mode") == "chatgpt" && HasOfficialTokens(auth);
+            if (!current.OfficialMode && !hasTokens) return;
+            if (current.OfficialMode)
+            {
+                next["official_model"] = current.Model;
+                next["official_effort"] = current.ReasoningEffort;
+            }
+            var entry = previous == null ? null : FindProfile(next, "official_accounts", "id", ProfileString(previous, "id"));
+            // An explicit deletion wins over importing the still-active credentials.
+            if (applying && previous != null && entry == null) return;
+            if (!hasTokens)
+            {
+                if (current.OfficialMode && entry != null) entry.Remove("official_auth");
+                return;
+            }
+            var identity = AccountIdentity(latest);
+            string accountId = ProfileString(identity, "account_id");
+            if (String.IsNullOrWhiteSpace(accountId))
+                throw new InvalidOperationException("当前官方凭据缺少 account_id，无法区分账号；未改写配置。");
+            var existing = FindProfile(next, "official_accounts", "account_id", accountId);
+            if (existing != null) entry = existing;
+            else if (entry == null || (!String.IsNullOrEmpty(ProfileString(entry, "account_id")) && ProfileString(entry, "account_id") != accountId))
+            {
+                string selected = ProfileString(next, "selected_official");
+                AddProfile(next, true, ProfileString(identity, "email") ?? ProfileString(identity, "account_name") ?? "官方账号", null);
+                entry = SelectedProfile(next, "official_accounts");
+                if (applying && !String.IsNullOrEmpty(selected)) next["selected_official"] = selected;
+            }
+            entry["official_auth"] = latest;
+            foreach (var pair in identity) entry[pair.Key] = pair.Value;
+            if (!applying) next["selected_official"] = ProfileString(entry, "id");
+        }
+
         internal static void SaveOfficial(string proxyUrl)
         {
-            string proxy = NormalizeOfficialProxyUrl(proxyUrl);
-            ValidateModeSwitch(true);
-            var profiles = CaptureProfiles();
-            profiles["official_proxy_url"] = proxy;
-            string providers;
-            string cleanToml = SplitProviders(ReadText(ConfigPath) ?? String.Empty, out providers);
-            var lines = new List<string>(Regex.Split(cleanToml, "\\r?\\n"));
-            SetTopLevel(lines, "model_provider", QuoteToml("openai"));
-            RemoveTopLevel(lines, "model");
-            RemoveTopLevel(lines, "model_reasoning_effort");
-            string model = ProfileString(profiles, "official_model");
-            string effort = ProfileString(profiles, "official_effort");
-            if (!String.IsNullOrWhiteSpace(model)) SetTopLevel(lines, "model", QuoteToml(model));
-            SetTopLevel(lines, "model_reasoning_effort", QuoteToml(String.IsNullOrWhiteSpace(effort) ? "medium" : effort));
-            string auth = ProfileString(profiles, "official_auth");
-            if (String.IsNullOrWhiteSpace(auth)) auth = "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null}";
-            var officialAuth = ParseObject(auth);
-            if (ProfileString(officialAuth, "auth_mode") != "chatgpt")
-                throw new InvalidOperationException("\u4fdd\u5b58\u7684\u5b98\u65b9\u51ed\u8bc1\u683c\u5f0f\u4e0d\u6b63\u786e\uff0c\u672a\u5207\u6362\u6a21\u5f0f\u3002");
-            if (!String.IsNullOrWhiteSpace(ProfileString(officialAuth, "OPENAI_API_KEY")))
-            {
-                officialAuth["OPENAI_API_KEY"] = null;
-                auth = new JavaScriptSerializer().Serialize(officialAuth);
-            }
-            CommitMode(String.Join(Environment.NewLine, lines.ToArray()), auth, profiles);
+            var profiles = ReadEditableProfiles();
+            profiles["official_proxy_url"] = NormalizeOfficialProxyUrl(proxyUrl);
+            if (SelectedProfile(profiles, "official_accounts") == null)
+                AddProfile(profiles, true, "官方账号", null);
+            ApplyProfiles(profiles, true, ProfileString(profiles, "selected_official"));
         }
 
         internal static void ValidateModeSwitch(bool official)
@@ -1278,6 +1697,7 @@ internal static class ChatGPTApiOnly
             {
                 for (int index = 0; index < paths.Length; index++)
                 {
+                    if (String.Equals(original[index], updated[index], StringComparison.Ordinal)) continue;
                     attempted = index;
                     WriteAtomic(paths[index], updated[index]);
                 }
@@ -1287,6 +1707,7 @@ internal static class ChatGPTApiOnly
                 var errors = new List<Exception> { failure };
                 for (int index = attempted; index >= 0; index--)
                 {
+                    if (String.Equals(original[index], updated[index], StringComparison.Ordinal)) continue;
                     try
                     {
                         if (original[index] == null) { if (File.Exists(paths[index])) File.Delete(paths[index]); }
