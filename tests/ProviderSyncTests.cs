@@ -559,6 +559,107 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: independent API switching, preflight without writes, transaction rollback, active deletion and history preservation");
     }
 
+    private static Dictionary<string, string> ConfigFiles()
+    {
+        var result = new Dictionary<string, string>();
+        foreach (string name in new[] { "config.toml", "auth.json", ".env", "launcher-profiles/modes.json" })
+        {
+            string path = Path.Combine(fixture, name);
+            result[name] = File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        return result;
+    }
+
+    private static void CheckFiles(Dictionary<string, string> expected)
+    {
+        var actual = ConfigFiles();
+        foreach (var item in expected) Check(actual[item.Key] == item.Value, "Unexpected write: " + item.Key);
+    }
+
+    private static void CheckTabLayout(Form form, TabPage tab)
+    {
+        ((TabControl)Field(form, "modeTabs")).SelectedTab = tab;
+        Application.DoEvents();
+        foreach (Control control in tab.Controls)
+        {
+            Check(control.Visible && tab.ClientRectangle.Contains(control.Bounds), "Clipped tab control: " + control.Text);
+            foreach (Control other in tab.Controls)
+                if (control != other) Check(!control.Bounds.IntersectsWith(other.Bounds), "Overlapping controls: " + control.Text + " / " + other.Text);
+        }
+    }
+
+    private static void TestSettingsActions(string root, object data)
+    {
+        UseFixture(root, "settings-actions");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        Type formType = App.GetNestedType("ConfigForm", Flags);
+        Call(store, "Save", data);
+        string rollout = Rollout("sessions", "example", "example-old");
+        string history = File.ReadAllText(rollout);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var tabs = (TabControl)Field(form, "modeTabs");
+            var custom = (TabPage)Field(form, "customTab");
+            var official = (TabPage)Field(form, "officialTab");
+            CheckTabLayout(form, official);
+            using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(fixture, "official.png")); }
+            CheckTabLayout(form, custom);
+            Check(((Control)Field(form, "providerNameTextBox")).Parent == custom && ((Control)Field(form, "repairButton")).Parent == custom, "API controls outside tab");
+            using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size)); bitmap.Save(Path.Combine(fixture, "custom.png")); }
+            formType.GetMethod("ShowRepairProgress", Flags).Invoke(form, null);
+            foreach (string name in new[] { "repairProgressCaption", "repairProgressBar", "repairProgressLabel" })
+            {
+                var control = (Control)Field(form, name);
+                Check(control.Visible && form.ClientRectangle.Contains(control.Bounds), "Repair progress clipped");
+            }
+            CheckTabLayout(form, custom);
+            formType.GetMethod("HideRepairProgress", Flags).Invoke(form, null);
+            var launch = (Button)Field(form, "launchButton");
+            var save = (Button)Field(form, "customSaveButton");
+            var model = (TextBox)Field(form, "modelTextBox");
+            var files = ConfigFiles();
+            model.Text = "example-changed";
+            launch.PerformClick();
+            Check(form.Visible && form.DialogResult == DialogResult.None, "Dirty launch closed settings");
+            Check(((Label)Field(form, "configurationStatus")).Text.Contains("未保存"), "Dirty launch did not explain save requirement");
+            CheckFiles(files);
+            string validUrl = ((TextBox)Field(form, "baseUrlTextBox")).Text;
+            ((TextBox)Field(form, "baseUrlTextBox")).Text = "invalid";
+            save.PerformClick();
+            CheckFiles(files);
+            Check(form.Visible && model.Text == "example-changed", "Failed validation discarded draft");
+            ((TextBox)Field(form, "baseUrlTextBox")).Text = validUrl;
+            save.PerformClick();
+            Check(form.Visible && form.DialogResult == DialogResult.None && launch.Enabled, "Save closed settings or left launch disabled");
+            Check((string)Field(Call(store, "Load"), "Model") == "example-changed", "Save did not persist model");
+            Check(File.ReadAllText(rollout) == history && !Directory.Exists(Path.Combine(fixture, "backups_state")), "Save repaired history");
+            files = ConfigFiles();
+            tabs.SelectedTab = official;
+            launch.PerformClick();
+            Check(form.Visible, "Unsaved mode change launched");
+            CheckFiles(files);
+            ((Button)Field(form, "officialSaveButton")).PerformClick();
+            Check(form.Visible && form.DialogResult == DialogResult.None, "Official save closed settings");
+            Check((bool)Field(Call(store, "Load"), "OfficialMode"), "Official mode not saved");
+            files = ConfigFiles();
+            launch.PerformClick();
+            Check(form.DialogResult == DialogResult.OK, "Saved official login could not launch");
+            CheckFiles(files);
+        }
+        // Exercise custom launch independently; successful launch must never save again.
+        Call(store, "Save", data);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var files = ConfigFiles();
+            ((Button)Field(form, "launchButton")).PerformClick();
+            Check(form.DialogResult == DialogResult.OK, "Saved custom configuration could not launch");
+            CheckFiles(files);
+        }
+        Console.WriteLine("PASS: settings layout, dirty launch blocked, validation preserves draft, save stays open, official/custom launch without writes");
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -617,6 +718,7 @@ internal static class ProviderSyncTests
             TestOfficialProxy(root, data);
             TestCliProxyDotEnv(root, data);
             TestProfileLibrary(root);
+            TestSettingsActions(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";

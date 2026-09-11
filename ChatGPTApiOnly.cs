@@ -473,14 +473,15 @@ internal static class ChatGPTApiOnly
 
     private sealed class ConfigForm : Form
     {
-        private bool saveAndLaunch = true;
+        private string savedDraftSnapshot;
+        private readonly Label configurationStatus;
         private readonly TextBox providerNameTextBox;
         private readonly TextBox baseUrlTextBox;
         private readonly TextBox apiKeyTextBox;
         private readonly TextBox modelTextBox;
         private readonly ComboBox reasoningComboBox;
         private readonly ErrorProvider errors;
-        private readonly Button saveButton;
+        private readonly Button launchButton;
         private readonly Button officialSaveButton;
         private readonly Button customSaveButton;
         private readonly Button cancelButton;
@@ -505,7 +506,7 @@ internal static class ChatGPTApiOnly
         {
             Text = "\u914d\u7f6e\u81ea\u5b9a\u4e49 API";
             Icon = LoadApplicationIcon();
-            ClientSize = new Size(572, 500);
+            ClientSize = new Size(572, 510);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -522,7 +523,7 @@ internal static class ChatGPTApiOnly
                 Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold, GraphicsUnit.Point),
                 Text = "\u914d\u7f6e\u81ea\u5b9a\u4e49 API"
             };
-            var intro = new Label
+            var intro = configurationStatus = new Label
             {
                 Location = new Point(24, 40),
                 Size = new Size(520, 22),
@@ -530,12 +531,16 @@ internal static class ChatGPTApiOnly
                 Text = "\u4fdd\u5b58\u540e\u5c06\u7ee7\u7eed\u542f\u52a8 ChatGPT\u3002\u914d\u7f6e\u4fdd\u5b58\u5728\u7528\u6237\u76ee\u5f55\u7684 .codex \u6587\u4ef6\u5939\u3002"
             };
 
+            modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 390), TabIndex = 0 };
+            officialTab = new TabPage("官方账号") { UseVisualStyleBackColor = true };
+            customTab = new TabPage("自定义 API") { UseVisualStyleBackColor = true };
+
             providerNameTextBox = AddField("\u63d0\u4f9b\u8005\u540d\u79f0", 88,
                 String.IsNullOrWhiteSpace(config.ProviderName) ? "custom" : config.ProviderName, 0);
             providerNameTextBox.Width = 286;
             repairButton = new Button
             {
-                Location = new Point(444, 86),
+                Location = new Point(424, 68),
                 Size = new Size(104, 27),
                 Text = "\u4fee\u590d\u5bf9\u8bdd",
                 TabIndex = 1,
@@ -559,13 +564,13 @@ internal static class ChatGPTApiOnly
             repairProgressCaption = new Label
             {
                 AutoSize = true,
-                Location = new Point(24, 468),
+                Location = new Point(24, 480),
                 Text = "\u5bf9\u8bdd\u4fee\u590d",
                 Visible = false
             };
             repairProgressBar = new ProgressBar
             {
-                Location = new Point(150, 466),
+                Location = new Point(150, 478),
                 Size = new Size(286, 18),
                 Minimum = 0,
                 Maximum = 1,
@@ -577,7 +582,7 @@ internal static class ChatGPTApiOnly
             repairProgressLabel = new Label
             {
                 AutoEllipsis = true,
-                Location = new Point(444, 467),
+                Location = new Point(444, 479),
                 Size = new Size(104, 18),
                 ForeColor = SystemColors.GrayText,
                 Text = String.Empty,
@@ -585,19 +590,19 @@ internal static class ChatGPTApiOnly
                 Visible = false
             };
 
-            saveButton = new Button
+            launchButton = new Button
             {
                 Location = new Point(368, 464),
                 Size = new Size(112, 30),
                 Text = "启动",
                 TabIndex = 9
             };
-            saveButton.Click += delegate { saveAndLaunch = true; SaveButtonOnClick(null, EventArgs.Empty); };
+            launchButton.Click += LaunchButtonOnClick;
 
-            officialSaveButton = new Button { Location = new Point(330, 300), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
-            customSaveButton = new Button { Location = new Point(330, 300), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
-            officialSaveButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
-            customSaveButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
+            officialSaveButton = new Button { Location = new Point(404, 324), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
+            customSaveButton = new Button { Location = new Point(404, 324), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
+            officialSaveButton.Click += SaveButtonOnClick;
+            customSaveButton.Click += SaveButtonOnClick;
 
             cancelButton = new Button
             {
@@ -610,25 +615,21 @@ internal static class ChatGPTApiOnly
 
             errors = new ErrorProvider { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             errors.ContainerControl = this;
-            AcceptButton = saveButton;
+            AcceptButton = launchButton;
             CancelButton = cancelButton;
             storeButton = ClientStore.CreateButton(false, new Point(24, 464), 7, this);
             updatesButton = ClientStore.CreateButton(true, new Point(144, 464), 8, this);
             Controls.Add(heading);
             Controls.Add(intro);
-            Controls.Add(repairButton);
+            customTab.Controls.Add(repairButton);
             Controls.Add(repairProgressCaption);
             Controls.Add(repairProgressBar);
             Controls.Add(repairProgressLabel);
-            Controls.Add(saveButton);
+            Controls.Add(launchButton);
             Controls.Add(cancelButton);
             Controls.Add(storeButton);
             Controls.Add(updatesButton);
 
-            // Reuse the existing API form inside its tab; shared actions stay outside.
-            modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 390), TabIndex = 0 };
-            officialTab = new TabPage("\u5b98\u65b9\u8d26\u53f7") { UseVisualStyleBackColor = true };
-            customTab = new TabPage("\u81ea\u5b9a\u4e49 API") { UseVisualStyleBackColor = true };
             profileDraft = ConfigStore.ReadEditableProfiles();
             officialAccountComboBox = new ComboBox { Location = new Point(20, 8), Size = new Size(310, 23), DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "官方账号配置" };
             customProviderComboBox = new ComboBox { Location = new Point(20, 8), Size = new Size(300, 23), DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "自定义 API 配置" };
@@ -657,14 +658,6 @@ internal static class ChatGPTApiOnly
             modeTabs.TabPages.Add(customTab);
             officialTab.Controls.Add(officialSaveButton);
             customTab.Controls.Add(customSaveButton);
-            var fields = new List<Control>();
-            foreach (Control control in Controls)
-                if (control.Top >= 96 && control.Top < 370) fields.Add(control);
-            foreach (Control control in fields)
-            {
-                control.Location = new Point(control.Left - 20, control.Top - 18);
-                customTab.Controls.Add(control);
-            }
             accountStatus = new Label
             {
                 Location = new Point(20, 74), Size = new Size(480, 32),
@@ -676,10 +669,9 @@ internal static class ChatGPTApiOnly
             officialTab.Controls.Add(accountStatus);
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 112), Size = new Size(480, 78),
-                Text = "添加账号后点击“应用并启动”，在官方客户端完成登录。\r\n" +
-                    "下次打开连接设置时自动识别并收录登录账号。\r\n\r\n" +
-                    "切换模式会保留另一种模式的配置，不会修改历史对话。"
+                Location = new Point(20, 112), Size = new Size(480, 48),
+                Text = "添加账号后先保存，再启动客户端登录。\r\n" +
+                    "下次打开设置时自动收录登录凭据。"
             });
             officialAccountComboBox.SelectedIndexChanged += delegate {
                 if (!updatingProfileSelectors) profileDraft["selected_official"] = SelectedProfileId(true) ?? String.Empty;
@@ -694,39 +686,37 @@ internal static class ChatGPTApiOnly
             };
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 220), AutoSize = true,
+                Location = new Point(20, 180), AutoSize = true,
                 Text = "HTTP 代理（可选）"
             });
             officialProxyTextBox = new TextBox
             {
-                Location = new Point(20, 244), Size = new Size(480, 23),
+                Location = new Point(20, 204), Size = new Size(480, 23),
                 Text = config.OfficialProxyUrl ?? String.Empty,
                 AccessibleName = "官方账号 HTTP 代理", TabIndex = 0
             };
             officialTab.Controls.Add(officialProxyTextBox);
             officialTab.Controls.Add(new Label
             {
-                Location = new Point(20, 278), Size = new Size(480, 66),
+                Location = new Point(20, 238), Size = new Size(480, 64),
                 Text = "地址格式：http://主机:端口；留空不设置独立代理。\r\n" +
                     "仅作用于官方客户端及其子进程，不修改系统代理。\r\n" +
                     "本地代理软件需保持运行。"
             });
             Text = heading.Text = "ChatGPT \u8fde\u63a5\u8bbe\u7f6e";
-            intro.Text = "\u9009\u62e9\u767b\u5f55\u65b9\u5f0f\uff0c\u70b9\u51fb\u201c\u5e94\u7528\u5e76\u542f\u52a8\u201d\u540e\u751f\u6548\u3002";
+            intro.Text = "在当前 Tab 保存配置，再点击底部“启动”。";
             if (!String.IsNullOrEmpty(config.ProfileError))
             {
                 intro.Text = "\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u6a21\u5f0f\u914d\u7f6e\uff0c\u8bf7\u68c0\u67e5 launcher-profiles/modes.json\u3002";
                 intro.ForeColor = Color.Firebrick;
             }
-            saveButton.Text = "启动";
+            launchButton.Text = "启动";
             modeTabs.SelectedTab = config.OfficialMode || config.AuthMode == "chatgpt" ? officialTab : customTab;
             Controls.Add(modeTabs);
-            repairProgressCaption.Top += 100;
-            repairProgressBar.Top += 100;
-            repairProgressLabel.Top += 100;
             SetFooterTop(474);
             ClientSize = new Size(572, 510);
             UpdateAccountStatus();
+            savedDraftSnapshot = DraftSnapshot();
         }
 
         private async void RepairButtonOnClick(object sender, EventArgs e)
@@ -814,7 +804,7 @@ internal static class ChatGPTApiOnly
 
         private void SetFooterTop(int top)
         {
-            foreach (Button button in new[] { storeButton, updatesButton, saveButton, officialSaveButton, customSaveButton, cancelButton })
+            foreach (Button button in new[] { storeButton, updatesButton, launchButton, cancelButton })
                 button.Top = top;
         }
 
@@ -830,7 +820,7 @@ internal static class ChatGPTApiOnly
             repairButton.Enabled = !busy;
             storeButton.Enabled = !busy;
             updatesButton.Enabled = !busy;
-            saveButton.Enabled = !busy;
+            launchButton.Enabled = !busy;
             cancelButton.Enabled = !busy;
             UseWaitCursor = busy;
         }
@@ -857,16 +847,16 @@ internal static class ChatGPTApiOnly
             var label = new Label
             {
                 AutoSize = true,
-                Location = new Point(24, top + 6),
+                Location = new Point(4, top - 12),
                 Text = labelText
             };
-            field.Location = new Point(150, top);
+            field.Location = new Point(130, top - 18);
             field.Size = new Size(398, 23);
             field.Text = value;
             field.TabIndex = tabIndex;
             field.AccessibleName = labelText;
-            Controls.Add(label);
-            Controls.Add(field);
+            customTab.Controls.Add(label);
+            customTab.Controls.Add(field);
         }
 
         private string SelectedProfileId(bool official)
@@ -899,7 +889,7 @@ internal static class ChatGPTApiOnly
             var profile = ConfigStore.SelectedProfile(profileDraft, "official_accounts");
             accountStatus.Text = profile == null ? "尚未添加账号，点击“添加账号”开始。" :
                 profile.ContainsKey("official_auth") ? "已保存本地登录凭据；有效性由官方客户端确认。" :
-                "此账号尚未登录或已退出，应用后在客户端登录。";
+                "此账号尚未登录或已退出，保存后启动客户端登录。";
         }
 
         private void LoadCustomProfileIntoFields()
@@ -942,8 +932,8 @@ internal static class ChatGPTApiOnly
                 PopulateProfileSelectors();
                 LoadCustomProfileIntoFields();
                 var next = ConfigStore.SelectedProfile(profileDraft, official ? "official_accounts" : "custom_providers");
-                MessageBox.Show(this, next == null ? "已从草稿删除最后一项配置。请添加配置，或选择另一种模式后应用。" :
-                    "已从草稿删除，自动选择“" + next["name"] + "”。点击应用并启动后保存。",
+                MessageBox.Show(this, next == null ? "已从草稿删除最后一项配置。请添加配置，或选择另一种模式后保存。" :
+                    "已从草稿删除，自动选择“" + next["name"] + "”。点击当前 Tab 的“保存配置”生效。",
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception exception) { MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error); }
@@ -983,6 +973,51 @@ internal static class ChatGPTApiOnly
             }
         }
 
+        private string DraftSnapshot()
+        {
+            // Include both tabs and all library mutations, without writing or normalizing the draft.
+            return new JavaScriptSerializer().Serialize(new object[] {
+                profileDraft, modeTabs.SelectedTab == officialTab, officialProxyTextBox.Text,
+                providerNameTextBox.Text, baseUrlTextBox.Text, apiKeyTextBox.Text,
+                modelTextBox.Text, reasoningComboBox.Text
+            });
+        }
+
+        private void ConfigurationSaved()
+        {
+            profileDraft = ConfigStore.ReadEditableProfiles();
+            PopulateProfileSelectors();
+            LoadCustomProfileIntoFields();
+            officialProxyTextBox.Text = ConfigStore.Load().OfficialProxyUrl ?? String.Empty;
+            savedDraftSnapshot = DraftSnapshot();
+            UseWaitCursor = false;
+            launchButton.Enabled = true;
+            launchButton.Text = "启动";
+            configurationStatus.ForeColor = SystemColors.GrayText;
+            configurationStatus.Text = "配置已保存。可继续编辑，或点击“启动”。";
+        }
+
+        private void LaunchButtonOnClick(object sender, EventArgs e)
+        {
+            if (DraftSnapshot() != savedDraftSnapshot)
+            {
+                configurationStatus.ForeColor = Color.Firebrick;
+                configurationStatus.Text = "有未保存的修改，请先点击当前 Tab 的“保存配置”。";
+                return;
+            }
+            ConfigData saved = ConfigStore.Load();
+            // An official account without tokens must still be able to open the login UI.
+            if (!String.IsNullOrEmpty(saved.ProfileError) ||
+                (!saved.OfficialMode && !saved.IsValid))
+            {
+                configurationStatus.ForeColor = Color.Firebrick;
+                configurationStatus.Text = "已保存配置不可用，请检查并保存配置后再启动。";
+                return;
+            }
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
         private void SaveButtonOnClick(object sender, EventArgs e)
         {
             errors.Clear();
@@ -1003,8 +1038,7 @@ internal static class ChatGPTApiOnly
                     ConfigStore.ValidateProfiles(profileDraft, true, SelectedProfileId(true));
                     stage = "保存官方配置";
                     ConfigStore.ApplyProfiles(profileDraft, true, SelectedProfileId(true));
-                    DialogResult = saveAndLaunch ? DialogResult.OK : DialogResult.Cancel;
-                    Close();
+                    ConfigurationSaved();
                 }
                 catch (Exception exception)
                 {
@@ -1041,26 +1075,26 @@ internal static class ChatGPTApiOnly
                     ReasoningEffort = reasoningComboBox.Text.Trim(),
                     AuthMode = "apikey"
                 };
-                saveButton.Enabled = false;
-                saveButton.Text = "\u6b63\u5728\u4fdd\u5b58\u2026";
+                launchButton.Enabled = false;
+                launchButton.Text = "\u6b63\u5728\u4fdd\u5b58\u2026";
                 UseWaitCursor = true;
                 Refresh();
 
                 if (SelectedProfileId(false) == null)
                     ConfigStore.AddProfile(profileDraft, false, data.ProviderName, null);
+                profileDraft["official_proxy_url"] = ConfigStore.NormalizeOfficialProxyUrl(officialProxyTextBox.Text);
                 ConfigStore.UpdateCustomDraft(ConfigStore.SelectedProfile(profileDraft, "custom_providers"), data);
                 ConfigStore.ValidateProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
                 ConfigStore.ApplyProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
-                DialogResult = saveAndLaunch ? DialogResult.OK : DialogResult.Cancel;
-                Close();
+                ConfigurationSaved();
             }
             catch (Exception exception)
             {
                 UseWaitCursor = false;
-                saveButton.Enabled = true;
-                saveButton.Text = "启动";
+                launchButton.Enabled = true;
+                launchButton.Text = "启动";
                 MessageBox.Show(this,
-                    StartupFailureMessage("保存自定义配置或启动", exception),
+                    StartupFailureMessage("保存自定义配置", exception),
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
