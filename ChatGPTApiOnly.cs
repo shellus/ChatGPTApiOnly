@@ -413,10 +413,9 @@ internal static class ChatGPTApiOnly
             if (openingConfiguration) return;
             openingConfiguration = true;
             pollTimer.Stop();
-            statusLabel.Text = "\u6b63\u5728\u505c\u6b62 ChatGPT\u2026";
+            statusLabel.Text = "\u6b63\u5728\u6253\u5f00\u8fde\u63a5\u8bbe\u7f6e\u2026";
             Refresh();
 
-            StopPackagedChatGptProcesses(packageRoot);
             Hide();
 
             config = ConfigStore.Load();
@@ -474,6 +473,7 @@ internal static class ChatGPTApiOnly
 
     private sealed class ConfigForm : Form
     {
+        private bool saveAndLaunch = true;
         private readonly TextBox providerNameTextBox;
         private readonly TextBox baseUrlTextBox;
         private readonly TextBox apiKeyTextBox;
@@ -590,7 +590,15 @@ internal static class ChatGPTApiOnly
                 Text = "\u4fdd\u5b58\u5e76\u542f\u52a8",
                 TabIndex = 9
             };
-            saveButton.Click += SaveButtonOnClick;
+            saveButton.Click += delegate { saveAndLaunch = true; SaveButtonOnClick(null, EventArgs.Empty); };
+
+            var saveOnlyButton = new Button
+            {
+                Location = new Point(250, 374), Size = new Size(112, 30),
+                Text = "保存配置", TabIndex = 10
+            };
+            saveOnlyButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
+            Controls.Add(saveOnlyButton);
 
             cancelButton = new Button
             {
@@ -598,7 +606,7 @@ internal static class ChatGPTApiOnly
                 Size = new Size(62, 30),
                 Text = "\u53d6\u6d88",
                 DialogResult = DialogResult.Cancel,
-                TabIndex = 10
+                TabIndex = 11
             };
 
             errors = new ErrorProvider { BlinkStyle = ErrorBlinkStyle.NeverBlink };
@@ -992,14 +1000,9 @@ internal static class ChatGPTApiOnly
                     StoreCustomFields();
                     profileDraft["official_proxy_url"] = proxy;
                     ConfigStore.ValidateProfiles(profileDraft, true, SelectedProfileId(true));
-                    string packageRoot;
-                    stage = "查找 ChatGPT 安装";
-                    FindLatestChatGptExecutable(out packageRoot);
-                    stage = "停止旧 ChatGPT 进程";
-                    StopPackagedChatGptProcesses(packageRoot, true);
                     stage = "保存官方配置";
                     ConfigStore.ApplyProfiles(profileDraft, true, SelectedProfileId(true));
-                    DialogResult = DialogResult.OK;
+                    DialogResult = saveAndLaunch ? DialogResult.OK : DialogResult.Cancel;
                     Close();
                 }
                 catch (Exception exception)
@@ -1046,11 +1049,8 @@ internal static class ChatGPTApiOnly
                     ConfigStore.AddProfile(profileDraft, false, data.ProviderName, null);
                 ConfigStore.UpdateCustomDraft(ConfigStore.SelectedProfile(profileDraft, "custom_providers"), data);
                 ConfigStore.ValidateProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
-                string packageRoot;
-                FindLatestChatGptExecutable(out packageRoot);
-                StopPackagedChatGptProcesses(packageRoot, true);
                 ConfigStore.ApplyProfiles(profileDraft, false, profileDraft["selected_custom"] as string);
-                DialogResult = DialogResult.OK;
+                DialogResult = saveAndLaunch ? DialogResult.OK : DialogResult.Cancel;
                 Close();
             }
             catch (Exception exception)

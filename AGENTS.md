@@ -5,6 +5,7 @@
 - 项目是单文件 .NET Framework WinForms 启动器，主源码为 `ChatGPTApiOnly.cs`。
 - 保持启动器无需额外运行库、安装器或 PowerShell 脚本即可运行。
 - 不添加启动器级单实例锁。重复启动行为应继续交给官方桌面应用处理。
+- 保存配置与启动客户端分开；启动器不得因打开设置或保存配置而停止已运行的 ChatGPT，保存并启动时启动客户端后启动器自动退出。
 - Electron 外壳的 OpenAI 云端域名阻断不能影响内置 Codex app-server 对自定义 API 的访问。
 
 ## 配置与 Provider
