@@ -481,6 +481,8 @@ internal static class ChatGPTApiOnly
         private readonly ComboBox reasoningComboBox;
         private readonly ErrorProvider errors;
         private readonly Button saveButton;
+        private readonly Button officialSaveButton;
+        private readonly Button customSaveButton;
         private readonly Button cancelButton;
         private readonly Button repairButton;
         private readonly Button storeButton;
@@ -587,18 +589,15 @@ internal static class ChatGPTApiOnly
             {
                 Location = new Point(368, 374),
                 Size = new Size(112, 30),
-                Text = "\u4fdd\u5b58\u5e76\u542f\u52a8",
+                Text = "启动",
                 TabIndex = 9
             };
             saveButton.Click += delegate { saveAndLaunch = true; SaveButtonOnClick(null, EventArgs.Empty); };
 
-            var saveOnlyButton = new Button
-            {
-                Location = new Point(250, 374), Size = new Size(112, 30),
-                Text = "保存配置", TabIndex = 10
-            };
-            saveOnlyButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
-            Controls.Add(saveOnlyButton);
+            officialSaveButton = new Button { Location = new Point(330, 300), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
+            customSaveButton = new Button { Location = new Point(330, 300), Size = new Size(100, 30), Text = "保存配置", TabIndex = 10 };
+            officialSaveButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
+            customSaveButton.Click += delegate { saveAndLaunch = false; SaveButtonOnClick(null, EventArgs.Empty); };
 
             cancelButton = new Button
             {
@@ -656,6 +655,8 @@ internal static class ChatGPTApiOnly
             renameCustom.Click += delegate { RenameProfileFromUi(false); };
             modeTabs.TabPages.Add(officialTab);
             modeTabs.TabPages.Add(customTab);
+            officialTab.Controls.Add(officialSaveButton);
+            customTab.Controls.Add(customSaveButton);
             var fields = new List<Control>();
             foreach (Control control in Controls)
                 if (control.Top >= 96 && control.Top < 370) fields.Add(control);
@@ -717,7 +718,7 @@ internal static class ChatGPTApiOnly
                 intro.Text = "\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u6a21\u5f0f\u914d\u7f6e\uff0c\u8bf7\u68c0\u67e5 launcher-profiles/modes.json\u3002";
                 intro.ForeColor = Color.Firebrick;
             }
-            saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
+            saveButton.Text = "启动";
             modeTabs.SelectedTab = config.OfficialMode || config.AuthMode == "chatgpt" ? officialTab : customTab;
             Controls.Add(modeTabs);
             repairProgressCaption.Top += 100;
@@ -813,7 +814,7 @@ internal static class ChatGPTApiOnly
 
         private void SetFooterTop(int top)
         {
-            foreach (Button button in new[] { storeButton, updatesButton, saveButton, cancelButton })
+            foreach (Button button in new[] { storeButton, updatesButton, saveButton, officialSaveButton, customSaveButton, cancelButton })
                 button.Top = top;
         }
 
@@ -1057,7 +1058,7 @@ internal static class ChatGPTApiOnly
             {
                 UseWaitCursor = false;
                 saveButton.Enabled = true;
-                saveButton.Text = "\u5e94\u7528\u5e76\u542f\u52a8";
+                saveButton.Text = "启动";
                 MessageBox.Show(this,
                     StartupFailureMessage("保存自定义配置或启动", exception),
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
