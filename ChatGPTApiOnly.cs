@@ -933,7 +933,7 @@ internal static class ChatGPTApiOnly
                 LoadCustomProfileIntoFields();
                 var next = ConfigStore.SelectedProfile(profileDraft, official ? "official_accounts" : "custom_providers");
                 MessageBox.Show(this, next == null ? "已从草稿删除最后一项配置。请添加配置，或选择另一种模式后保存。" :
-                    "已从草稿删除，自动选择“" + next["name"] + "”。点击当前 Tab 的“保存配置”生效。",
+                    "已从草稿删除，自动选择“" + ProfileChoice.DisplayName(next) + "”。点击当前 Tab 的“保存配置”生效。",
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception exception) { MessageBox.Show(this, exception.Message, "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error); }
@@ -943,7 +943,7 @@ internal static class ChatGPTApiOnly
         {
             var profile = ConfigStore.SelectedProfile(profileDraft, official ? "official_accounts" : "custom_providers");
             if (profile == null) return;
-            string name = PromptText("配置名称", profile["name"] as string);
+            string name = PromptText("配置名称", ProfileChoice.DisplayName(profile));
             if (name == null) return;
             profile["name"] = name;
             PopulateProfileSelectors();
@@ -962,9 +962,15 @@ internal static class ChatGPTApiOnly
         {
             internal string Id; internal string Name;
             public override string ToString() { return Name; }
+            internal static string DisplayName(Dictionary<string, object> profile)
+            {
+                object value;
+                string name = profile.TryGetValue("name", out value) ? value as string : null;
+                return String.IsNullOrWhiteSpace(name) ? "未命名配置" : name;
+            }
             internal static ProfileChoice From(Dictionary<string, object> profile)
             {
-                string name = profile.ContainsKey("name") ? profile["name"] as string : "未命名配置";
+                string name = DisplayName(profile);
                 string email = profile.ContainsKey("email") ? profile["email"] as string : null;
                 string accountName = profile.ContainsKey("account_name") ? profile["account_name"] as string : null;
                 string account = profile.ContainsKey("account_id") ? profile["account_id"] as string : null;

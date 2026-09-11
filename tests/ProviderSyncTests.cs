@@ -660,6 +660,69 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: settings layout, dirty launch blocked, validation preserves draft, save stays open, official/custom launch without writes");
     }
 
+    private static void TestUnnamedProfileRename(string root, object data)
+    {
+        UseFixture(root, "unnamed-profile");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        Type formType = App.GetNestedType("ConfigForm", Flags);
+        Call(store, "Save", data);
+        var profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
+        Call(store, "AddProfile", profiles, true, "example", null);
+        foreach (string collection in new[] { "official_accounts", "custom_providers" })
+        {
+            var profile = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, collection);
+            profile.Remove("name");
+            profile["example_unknown"] = "example-preserved";
+        }
+        File.WriteAllText(Path.Combine(fixture, "launcher-profiles", "modes.json"),
+            new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(profiles), Utf8);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            foreach (bool official in new[] { true, false })
+            foreach (string initialName in new[] { null, "", "   " })
+            {
+                var draft = (Dictionary<string, object>)Field(form, "profileDraft");
+                var profile = (Dictionary<string, object>)Call(store, "SelectedProfile", draft, official ? "official_accounts" : "custom_providers");
+                if (initialName == null) profile.Remove("name"); else profile["name"] = initialName;
+                string id = (string)profile["id"];
+                formType.GetMethod("PopulateProfileSelectors", Flags).Invoke(form, null);
+                var selector = (ComboBox)Field(form, official ? "officialAccountComboBox" : "customProviderComboBox");
+                Check(selector.SelectedItem.ToString().StartsWith("未命名配置"), "Unnamed profile has no display fallback");
+                var files = ConfigFiles();
+                bool prompted = false;
+                bool correctInitial = false;
+                using (var timer = new Timer { Interval = 30 })
+                {
+                    timer.Tick += delegate
+                    {
+                        foreach (Form dialog in Application.OpenForms)
+                        {
+                            if (dialog == form || dialog.Text != "配置名称") continue;
+                            foreach (Control control in dialog.Controls)
+                            {
+                                var input = control as TextBox;
+                                if (input == null) continue;
+                                correctInitial = input.Text == "未命名配置";
+                                input.Text = "example-renamed";
+                            }
+                            prompted = true;
+                            timer.Stop();
+                            dialog.DialogResult = DialogResult.OK;
+                            break;
+                        }
+                    };
+                    timer.Start();
+                    formType.GetMethod("RenameProfileFromUi", Flags).Invoke(form, new object[] { official });
+                }
+                Check(prompted && correctInitial && (string)profile["name"] == "example-renamed", "Unnamed profile rename failed");
+                Check((string)profile["id"] == id && (string)profile["example_unknown"] == "example-preserved", "Rename changed profile identity or unknown fields");
+                CheckFiles(files);
+            }
+        }
+        Console.WriteLine("PASS: official/custom rename with absent, empty and blank names; draft-only edits preserve identity");
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -719,6 +782,7 @@ internal static class ProviderSyncTests
             TestCliProxyDotEnv(root, data);
             TestProfileLibrary(root);
             TestSettingsActions(root, data);
+            TestUnnamedProfileRename(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";
