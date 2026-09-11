@@ -505,7 +505,7 @@ internal static class ChatGPTApiOnly
         {
             Text = "\u914d\u7f6e\u81ea\u5b9a\u4e49 API";
             Icon = LoadApplicationIcon();
-            ClientSize = new Size(572, 410);
+            ClientSize = new Size(572, 500);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -524,18 +524,18 @@ internal static class ChatGPTApiOnly
             };
             var intro = new Label
             {
-                Location = new Point(24, 44),
+                Location = new Point(24, 40),
                 Size = new Size(520, 22),
                 ForeColor = SystemColors.GrayText,
                 Text = "\u4fdd\u5b58\u540e\u5c06\u7ee7\u7eed\u542f\u52a8 ChatGPT\u3002\u914d\u7f6e\u4fdd\u5b58\u5728\u7528\u6237\u76ee\u5f55\u7684 .codex \u6587\u4ef6\u5939\u3002"
             };
 
-            providerNameTextBox = AddField("\u63d0\u4f9b\u8005\u540d\u79f0", 98,
+            providerNameTextBox = AddField("\u63d0\u4f9b\u8005\u540d\u79f0", 88,
                 String.IsNullOrWhiteSpace(config.ProviderName) ? "custom" : config.ProviderName, 0);
             providerNameTextBox.Width = 286;
             repairButton = new Button
             {
-                Location = new Point(444, 96),
+                Location = new Point(444, 86),
                 Size = new Size(104, 27),
                 Text = "\u4fee\u590d\u5bf9\u8bdd",
                 TabIndex = 1,
@@ -543,29 +543,29 @@ internal static class ChatGPTApiOnly
                 AccessibleDescription = "\u5c06\u672c\u5730\u5386\u53f2\u5bf9\u8bdd\u4fee\u590d\u5230\u5f53\u524d API \u63d0\u4f9b\u8005\u3002"
             };
             repairButton.Click += RepairButtonOnClick;
-            baseUrlTextBox = AddField("API \u5730\u5740", 146, config.BaseUrl ?? String.Empty, 2);
-            apiKeyTextBox = AddField("API Key", 194, config.ApiKey ?? String.Empty, 3);
-            modelTextBox = AddField("\u6a21\u578b\u540d", 242, config.Model ?? String.Empty, 4);
+            baseUrlTextBox = AddField("API \u5730\u5740", 130, config.BaseUrl ?? String.Empty, 2);
+            apiKeyTextBox = AddField("API Key", 172, config.ApiKey ?? String.Empty, 3);
+            modelTextBox = AddField("\u6a21\u578b\u540d", 214, config.Model ?? String.Empty, 4);
             reasoningComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
             reasoningComboBox.Items.AddRange(new object[] { "none", "minimal", "low", "medium", "high", "xhigh" });
-            AddField("\u601d\u8003\u5c42\u7ea7", 290,
+            AddField("\u601d\u8003\u5c42\u7ea7", 256,
                 String.IsNullOrWhiteSpace(config.ReasoningEffort) ? "medium" : config.ReasoningEffort, 5,
                 reasoningComboBox);
             reasoningComboBox.AccessibleDescription = "\u9ed8\u8ba4 medium\uff08\u4e2d\u7b49\uff09\uff0c\u53ef\u9009\u62e9\u6216\u8f93\u5165\u6a21\u578b\u652f\u6301\u7684\u5c42\u7ea7\u3002";
-            TextBox authModeTextBox = AddField("\u8ba4\u8bc1\u6a21\u5f0f", 338, "apikey", 6);
+            TextBox authModeTextBox = AddField("\u8ba4\u8bc1\u6a21\u5f0f", 298, "apikey", 6);
             authModeTextBox.Enabled = false;
             authModeTextBox.BackColor = SystemColors.Control;
 
             repairProgressCaption = new Label
             {
                 AutoSize = true,
-                Location = new Point(24, 378),
+                Location = new Point(24, 468),
                 Text = "\u5bf9\u8bdd\u4fee\u590d",
                 Visible = false
             };
             repairProgressBar = new ProgressBar
             {
-                Location = new Point(150, 376),
+                Location = new Point(150, 466),
                 Size = new Size(286, 18),
                 Minimum = 0,
                 Maximum = 1,
@@ -577,7 +577,7 @@ internal static class ChatGPTApiOnly
             repairProgressLabel = new Label
             {
                 AutoEllipsis = true,
-                Location = new Point(444, 377),
+                Location = new Point(444, 467),
                 Size = new Size(104, 18),
                 ForeColor = SystemColors.GrayText,
                 Text = String.Empty,
@@ -587,7 +587,7 @@ internal static class ChatGPTApiOnly
 
             saveButton = new Button
             {
-                Location = new Point(368, 374),
+                Location = new Point(368, 464),
                 Size = new Size(112, 30),
                 Text = "启动",
                 TabIndex = 9
@@ -601,7 +601,7 @@ internal static class ChatGPTApiOnly
 
             cancelButton = new Button
             {
-                Location = new Point(486, 374),
+                Location = new Point(486, 464),
                 Size = new Size(62, 30),
                 Text = "\u53d6\u6d88",
                 DialogResult = DialogResult.Cancel,
@@ -612,8 +612,8 @@ internal static class ChatGPTApiOnly
             errors.ContainerControl = this;
             AcceptButton = saveButton;
             CancelButton = cancelButton;
-            storeButton = ClientStore.CreateButton(false, new Point(24, 374), 7, this);
-            updatesButton = ClientStore.CreateButton(true, new Point(144, 374), 8, this);
+            storeButton = ClientStore.CreateButton(false, new Point(24, 464), 7, this);
+            updatesButton = ClientStore.CreateButton(true, new Point(144, 464), 8, this);
             Controls.Add(heading);
             Controls.Add(intro);
             Controls.Add(repairButton);
