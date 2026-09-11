@@ -39,14 +39,6 @@ internal static class ChatGPTApiOnly
     private static void Main(string[] args)
     {
 #if PROVIDER_SYNC_TEST
-        if (args.Length == 1 && args[0] == "--test-loading-ui")
-        {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new LoadingForm(ConfigStore.Load(), true));
-            return;
-        }
-
         if (args.Length == 1 && args[0] == "--test-provider-sync")
         {
             try
@@ -73,21 +65,35 @@ internal static class ChatGPTApiOnly
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        if (!EnsureClientInstalled(null)) return;
-        ConfigData config = ConfigStore.Load();
-        if (!config.IsValid)
-        {
-            using (var form = new ConfigForm(config))
-            {
-                if (form.ShowDialog() != DialogResult.OK)
-                {
-                    return;
-                }
-            }
-            config = ConfigStore.Load();
-        }
+        Application.Run(new ConfigForm(ConfigStore.Load()));
+    }
 
-        Application.Run(new LoadingForm(config));
+#if PROVIDER_SYNC_TEST
+    internal static Func<bool> TestLaunchClient;
+#endif
+
+    private static bool LaunchClient(IWin32Window owner, ConfigData config)
+    {
+#if PROVIDER_SYNC_TEST
+        if (TestLaunchClient != null) return TestLaunchClient();
+#endif
+        string packageRoot;
+        string executable = FindLatestChatGptExecutable(out packageRoot);
+        if (executable == null)
+        {
+            EnsureClientInstalled(owner);
+            return false;
+        }
+        try
+        {
+            Process.Start(ClientStartInfo(executable, config));
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            if (exception.NativeErrorCode != 5) throw;
+            Process.Start(ClientActivationInfo(packageRoot, config));
+        }
+        return true;
     }
 
     private static Icon LoadApplicationIcon()
@@ -137,7 +143,7 @@ internal static class ChatGPTApiOnly
             {
                 return MessageBox.Show(owner,
                     "\u672a\u68c0\u6d4b\u5230 ChatGPT \u5ba2\u6237\u7aef\u3002\u662f\u5426\u6253\u5f00 Microsoft Store \u5b89\u88c5\uff1f" +
-                    Environment.NewLine + "\u5b89\u88c5\u5b8c\u6210\u540e\uff0c\u8bf7\u91cd\u65b0\u8fd0\u884c\u672c\u542f\u52a8\u5668\u3002",
+                    Environment.NewLine + "安装完成后，请再次点击“启动”。",
                     "\u5b89\u88c5 ChatGPT", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
             },
             delegate { ClientStore.Open(false, owner); });
@@ -217,260 +223,6 @@ internal static class ChatGPTApiOnly
         }
     }
 
-    private sealed class LoadingForm : Form
-    {
-        private static readonly TimeSpan ExpectedStartupTime = TimeSpan.FromSeconds(4);
-
-        private readonly Label statusLabel;
-        private readonly ProgressBar progressBar;
-        private readonly Timer pollTimer;
-        private readonly Stopwatch elapsed;
-        private ConfigData config;
-        private string packageRoot;
-        private int lastSecondsRemaining = -1;
-        private bool openingConfiguration;
-
-#if PROVIDER_SYNC_TEST
-        private bool simulateStartup;
-#endif
-
-        internal LoadingForm(ConfigData initialConfig)
-        {
-            config = initialConfig;
-            Text = "ChatGPT API Only";
-            ClientSize = new Size(420, 164);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            ShowIcon = true;
-            ShowInTaskbar = true;
-            StartPosition = FormStartPosition.CenterScreen;
-            BackColor = SystemColors.Window;
-            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            KeyPreview = true;
-            AccessibleName = "ChatGPT API Only launcher";
-            AccessibleDescription = "Shows startup progress. Press Space to configure the custom API.";
-            KeyDown += LoadingFormOnKeyDown;
-
-            Icon = LoadApplicationIcon();
-
-            var iconBox = new PictureBox
-            {
-                Location = new Point(24, 22),
-                Size = new Size(32, 32),
-                SizeMode = PictureBoxSizeMode.Zoom,
-                TabStop = false
-            };
-            if (Icon != null)
-            {
-                iconBox.Image = Icon.ToBitmap();
-            }
-
-            var titleLabel = new Label
-            {
-                AutoSize = true,
-                Location = new Point(72, 20),
-                Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold, GraphicsUnit.Point),
-                ForeColor = SystemColors.ControlText,
-                Text = "ChatGPT API Only"
-            };
-
-            statusLabel = new Label
-            {
-                AutoEllipsis = true,
-                Location = new Point(72, 47),
-                Size = new Size(320, 22),
-                ForeColor = SystemColors.GrayText,
-                Text = "\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u9884\u8ba1\u7ea6 4 \u79d2",
-                AccessibleName = "Startup status"
-            };
-
-            progressBar = new ProgressBar
-            {
-                Location = new Point(24, 88),
-                Size = new Size(368, 8),
-                Minimum = 0,
-                Maximum = 100,
-                Value = 0,
-                Style = ProgressBarStyle.Continuous,
-                AccessibleName = "ChatGPT startup progress"
-            };
-
-            var configureButton = new Button
-            {
-                Location = new Point(280, 112),
-                Size = new Size(112, 30),
-                Text = "\u8fde\u63a5\u8bbe\u7f6e",
-                TabIndex = 2,
-                AccessibleName = "\u8fde\u63a5\u8bbe\u7f6e",
-                AccessibleDescription = "\u6253\u5f00\u81ea\u5b9a\u4e49 API \u914d\u7f6e\u3002\u4e5f\u53ef\u6309\u7a7a\u683c\u952e\u3002"
-            };
-            configureButton.Click += delegate { OpenConfiguration(); };
-
-            Controls.Add(iconBox);
-            Controls.Add(titleLabel);
-            Controls.Add(statusLabel);
-            Controls.Add(progressBar);
-            Controls.Add(ClientStore.CreateButton(false, new Point(24, 112), 0, this));
-            Controls.Add(ClientStore.CreateButton(true, new Point(144, 112), 1, this));
-            Controls.Add(configureButton);
-            ActiveControl = configureButton;
-
-            elapsed = new Stopwatch();
-            pollTimer = new Timer { Interval = 200 };
-            pollTimer.Tick += PollTimerOnTick;
-        }
-
-#if PROVIDER_SYNC_TEST
-        internal LoadingForm(ConfigData initialConfig, bool simulateStartup)
-            : this(initialConfig)
-        {
-            this.simulateStartup = simulateStartup;
-        }
-#endif
-
-        protected override void OnShown(EventArgs e)
-        {
-            base.OnShown(e);
-            ResetProgress();
-#if PROVIDER_SYNC_TEST
-            if (simulateStartup) return;
-#endif
-            BeginInvoke(new MethodInvoker(StartChatGpt));
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                pollTimer.Dispose();
-                progressBar.Dispose();
-            }
-            base.Dispose(disposing);
-        }
-
-        private void ResetProgress()
-        {
-            elapsed.Reset();
-            elapsed.Start();
-            lastSecondsRemaining = -1;
-            progressBar.Value = 0;
-            progressBar.Style = config.OfficialMode ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
-            statusLabel.Text = config.OfficialMode ? "\u6b63\u5728\u542f\u52a8 ChatGPT\uff08\u5b98\u65b9\u8d26\u53f7\uff09" : "\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u9884\u8ba1\u7ea6 4 \u79d2";
-            pollTimer.Start();
-        }
-
-        private void StartChatGpt()
-        {
-            string stage = "查找 ChatGPT 安装";
-            try
-            {
-                string executable = FindLatestChatGptExecutable(out packageRoot);
-                if (executable == null)
-                {
-                    pollTimer.Stop();
-                    EnsureClientInstalled(this);
-                    Close();
-                    return;
-                }
-
-                stage = "创建 ChatGPT 进程";
-                try
-                {
-                    Process.Start(ClientStartInfo(executable, config));
-                }
-                catch (System.ComponentModel.Win32Exception exception)
-                {
-                    if (exception.NativeErrorCode != 5) throw;
-                    stage = "通过 Windows 应用激活 ChatGPT";
-                    Process.Start(ClientActivationInfo(packageRoot, config));
-                }
-            }
-            catch (Exception exception)
-            {
-                pollTimer.Stop();
-                progressBar.Value = 0;
-                MessageBox.Show(this, StartupFailureMessage(stage, exception), "ChatGPT API Only",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
-            }
-        }
-
-        private void LoadingFormOnKeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode != Keys.Space || openingConfiguration || ActiveControl is Button)
-            {
-                return;
-            }
-
-            e.Handled = true;
-            e.SuppressKeyPress = true;
-            OpenConfiguration();
-        }
-
-        private void OpenConfiguration()
-        {
-            if (openingConfiguration) return;
-            openingConfiguration = true;
-            pollTimer.Stop();
-            statusLabel.Text = "\u6b63\u5728\u6253\u5f00\u8fde\u63a5\u8bbe\u7f6e\u2026";
-            Refresh();
-
-            Hide();
-
-            config = ConfigStore.Load();
-            using (var form = new ConfigForm(config))
-            {
-                if (form.ShowDialog() != DialogResult.OK)
-                {
-                    Close();
-                    return;
-                }
-            }
-
-            config = ConfigStore.Load();
-            openingConfiguration = false;
-            Show();
-            Activate();
-            ResetProgress();
-            BeginInvoke(new MethodInvoker(StartChatGpt));
-        }
-
-        private void PollTimerOnTick(object sender, EventArgs e)
-        {
-#if PROVIDER_SYNC_TEST
-            if (!simulateStartup)
-            {
-#endif
-            if (FindVisibleChatGptWindow() != IntPtr.Zero)
-            {
-                pollTimer.Stop();
-                progressBar.Value = 100;
-                statusLabel.Text = "ChatGPT \u5df2\u542f\u52a8";
-                Close();
-                return;
-            }
-#if PROVIDER_SYNC_TEST
-            }
-#endif
-
-            if (config.OfficialMode) return;
-            double elapsedSeconds = elapsed.Elapsed.TotalSeconds;
-            double expectedSeconds = ExpectedStartupTime.TotalSeconds;
-            int progress = Math.Min(95, (int)Math.Round(elapsedSeconds / expectedSeconds * 100));
-            progressBar.Value = Math.Max(progressBar.Value, progress);
-
-            int secondsRemaining = Math.Max(0, (int)Math.Ceiling(expectedSeconds - elapsedSeconds));
-            if (secondsRemaining != lastSecondsRemaining)
-            {
-                lastSecondsRemaining = secondsRemaining;
-                statusLabel.Text = secondsRemaining > 0
-                    ? String.Format("\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u9884\u8ba1\u8fd8\u9700 {0} \u79d2", secondsRemaining)
-                    : "\u6b63\u5728\u542f\u52a8 ChatGPT\uff0c\u5373\u5c06\u5b8c\u6210";
-            }
-        }
-    }
-
     private sealed class ConfigForm : Form
     {
         private string savedDraftSnapshot;
@@ -526,9 +278,10 @@ internal static class ChatGPTApiOnly
             var intro = configurationStatus = new Label
             {
                 Location = new Point(24, 40),
+                AutoEllipsis = true,
                 Size = new Size(520, 22),
                 ForeColor = SystemColors.GrayText,
-                Text = "\u4fdd\u5b58\u540e\u5c06\u7ee7\u7eed\u542f\u52a8 ChatGPT\u3002\u914d\u7f6e\u4fdd\u5b58\u5728\u7528\u6237\u76ee\u5f55\u7684 .codex \u6587\u4ef6\u5939\u3002"
+                Text = "在当前 Tab 保存配置，再点击底部“启动”。"
             };
 
             modeTabs = new TabControl { Location = new Point(16, 78), Size = new Size(540, 390), TabIndex = 0 };
@@ -615,7 +368,6 @@ internal static class ChatGPTApiOnly
 
             errors = new ErrorProvider { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             errors.ContainerControl = this;
-            AcceptButton = launchButton;
             CancelButton = cancelButton;
             storeButton = ClientStore.CreateButton(false, new Point(24, 464), 7, this);
             updatesButton = ClientStore.CreateButton(true, new Point(144, 464), 8, this);
@@ -704,7 +456,6 @@ internal static class ChatGPTApiOnly
                     "本地代理软件需保持运行。"
             });
             Text = heading.Text = "ChatGPT \u8fde\u63a5\u8bbe\u7f6e";
-            intro.Text = "在当前 Tab 保存配置，再点击底部“启动”。";
             if (!String.IsNullOrEmpty(config.ProfileError))
             {
                 intro.Text = "\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u6a21\u5f0f\u914d\u7f6e\uff0c\u8bf7\u68c0\u67e5 launcher-profiles/modes.json\u3002";
@@ -1020,8 +771,25 @@ internal static class ChatGPTApiOnly
                 configurationStatus.Text = "已保存配置不可用，请检查并保存配置后再启动。";
                 return;
             }
-            DialogResult = DialogResult.OK;
-            Close();
+            errors.Clear();
+            launchButton.Enabled = false;
+            try
+            {
+                if (LaunchClient(this, saved))
+                {
+                    Close();
+                    return;
+                }
+                configurationStatus.ForeColor = Color.Firebrick;
+                configurationStatus.Text = "未启动客户端。安装完成后可再次点击“启动”。";
+            }
+            catch (Exception exception)
+            {
+                configurationStatus.ForeColor = Color.Firebrick;
+                configurationStatus.Text = "启动失败：" + exception.Message;
+                errors.SetError(launchButton, StartupFailureMessage("启动客户端", exception));
+            }
+            finally { launchButton.Enabled = true; }
         }
 
         private void SaveButtonOnClick(object sender, EventArgs e)
@@ -2481,52 +2249,6 @@ internal static class ChatGPTApiOnly
         public void Report(T value) { action(value); }
     }
 #endif
-
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
-
-    private static IntPtr FindVisibleChatGptWindow()
-    {
-        foreach (Process process in Process.GetProcessesByName("ChatGPT"))
-        {
-            try
-            {
-                IntPtr window = process.MainWindowHandle;
-                if (window != IntPtr.Zero && IsWindowVisible(window)) return window;
-            }
-            catch { }
-            finally { process.Dispose(); }
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void StopPackagedChatGptProcesses(string packageRoot, bool requireExit = false)
-    {
-        if (String.IsNullOrWhiteSpace(packageRoot)) return;
-        string normalizedRoot = Path.GetFullPath(packageRoot).TrimEnd('\\') + "\\";
-        foreach (string processName in new[] { "ChatGPT", "codex" })
-        {
-            foreach (Process target in Process.GetProcessesByName(processName))
-            {
-                bool matched = false;
-                try
-                {
-                    string path = target.MainModule == null ? null : target.MainModule.FileName;
-                    if (path == null || !path.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)) continue;
-                    matched = true;
-                    target.Kill();
-                    if (requireExit && !target.WaitForExit(5000))
-                        throw new InvalidOperationException("ChatGPT \u5c1a\u672a\u9000\u51fa\uff0c\u8bf7\u5173\u95ed\u5ba2\u6237\u7aef\u540e\u91cd\u8bd5\u3002");
-                }
-                catch (Exception exception)
-                {
-                    if (requireExit && (matched || processName == "ChatGPT"))
-                        throw new InvalidOperationException("\u65e0\u6cd5\u505c\u6b62 ChatGPT\uff0c\u672a\u5207\u6362\u914d\u7f6e\u3002\u8bf7\u624b\u52a8\u9000\u51fa\u5ba2\u6237\u7aef\u540e\u91cd\u8bd5\u3002", exception);
-                }
-                finally { target.Dispose(); }
-            }
-        }
-    }
 
     private static string FindLatestChatGptExecutable(out string packageRoot)
     {

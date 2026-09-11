@@ -18,6 +18,7 @@ internal static class ProviderSyncTests
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
     private static string fixture;
     private static long retainedAtRepair;
+    private static int launchRequests;
 
     private static object Call(Type type, string method, params object[] args)
     {
@@ -615,6 +616,7 @@ internal static class ProviderSyncTests
             }
             CheckTabLayout(form, custom);
             formType.GetMethod("HideRepairProgress", Flags).Invoke(form, null);
+            Check(launchRequests == 0 && form.AcceptButton == null, "Opening settings or default Enter launched client");
             var launch = (Button)Field(form, "launchButton");
             var save = (Button)Field(form, "customSaveButton");
             var model = (TextBox)Field(form, "modelTextBox");
@@ -644,7 +646,7 @@ internal static class ProviderSyncTests
             Check((bool)Field(Call(store, "Load"), "OfficialMode"), "Official mode not saved");
             files = ConfigFiles();
             launch.PerformClick();
-            Check(form.DialogResult == DialogResult.OK, "Saved official login could not launch");
+            Check(!form.Visible && launchRequests == 1, "Saved official login could not launch");
             CheckFiles(files);
         }
         // Exercise custom launch independently; successful launch must never save again.
@@ -654,7 +656,7 @@ internal static class ProviderSyncTests
             form.Show();
             var files = ConfigFiles();
             ((Button)Field(form, "launchButton")).PerformClick();
-            Check(form.DialogResult == DialogResult.OK, "Saved custom configuration could not launch");
+            Check(!form.Visible && launchRequests == 2, "Saved custom configuration could not launch");
             CheckFiles(files);
         }
         Console.WriteLine("PASS: settings layout, dirty launch blocked, validation preserves draft, save stays open, official/custom launch without writes");
@@ -723,9 +725,41 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: official/custom rename with absent, empty and blank names; draft-only edits preserve identity");
     }
 
+    private static void TestLaunchFailure(string root, object data)
+    {
+        UseFixture(root, "launch-failure");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        Type formType = App.GetNestedType("ConfigForm", Flags);
+        Call(store, "Save", data);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var files = ConfigFiles();
+            var launch = (Button)Field(form, "launchButton");
+            int requests = 0;
+            ChatGPTApiOnly.TestLaunchClient = new Func<bool>(delegate { requests++; return false; });
+            Application.DoEvents();
+            Check(requests == 0 && form.AcceptButton == null, "Settings started client automatically");
+            launch.PerformClick();
+            Check(requests == 1 && form.Visible && launch.Enabled, "Missing client closed settings or prevented retry");
+            CheckFiles(files);
+            ChatGPTApiOnly.TestLaunchClient = new Func<bool>(delegate { requests++; throw new InvalidOperationException("example launch failure"); });
+            launch.PerformClick();
+            Check(requests == 2 && form.Visible && launch.Enabled, "Launch error closed settings or prevented retry");
+            Check(((Label)Field(form, "configurationStatus")).Text.Contains("example launch failure"), "Launch failure not displayed");
+            CheckFiles(files);
+            ChatGPTApiOnly.TestLaunchClient = new Func<bool>(delegate { requests++; return true; });
+            launch.PerformClick();
+            Check(requests == 3 && !form.Visible, "Successful retry did not close launcher");
+            CheckFiles(files);
+        }
+        Console.WriteLine("PASS: explicit launch only, missing client and failure stay open, successful retry exits without configuration writes");
+    }
+
     [STAThread]
     private static int Main()
     {
+        ChatGPTApiOnly.TestLaunchClient = new Func<bool>(delegate { launchRequests++; return true; });
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         string root = Path.Combine(Path.GetTempPath(), "ChatGPTApiOnly-tests-" + Guid.NewGuid().ToString("N"));
@@ -783,6 +817,7 @@ internal static class ProviderSyncTests
             TestProfileLibrary(root);
             TestSettingsActions(root, data);
             TestUnnamedProfileRename(root, data);
+            TestLaunchFailure(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";
