@@ -625,6 +625,11 @@ internal static class ProviderSyncTests
             }
             CheckTabLayout(form, custom);
             formType.GetMethod("HideRepairProgress", Flags).Invoke(form, null);
+            form.Scale(new SizeF(1.5F, 1.5F));
+            formType.GetMethod("ShowRepairProgress", Flags).Invoke(form, null);
+            foreach (string name in new[] { "repairProgressCaption", "repairProgressBar", "repairProgressLabel", "launchButton", "closeButton" })
+                Check(form.ClientRectangle.Contains(((Control)Field(form, name)).Bounds), "Scaled repair layout clipped " + name);
+            formType.GetMethod("HideRepairProgress", Flags).Invoke(form, null);
             Check(launchRequests == 0 && form.AcceptButton == null, "Opening settings or default Enter launched client");
             var launch = (Button)Field(form, "launchButton");
             var save = (Button)Field(form, "customSaveButton");
@@ -765,10 +770,94 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: explicit launch only, missing client and failure stay open, successful retry exits without configuration writes");
     }
 
+    private static void TestApplicationLifecycle(string root, object data)
+    {
+        UseFixture(root, "application-lifecycle");
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        Type formType = App.GetNestedType("ConfigForm", Flags);
+        Call(store, "Save", data);
+        int confirmations = 0, starts = 0;
+        ChatGPTApiOnly.TestLaunchClient = delegate { starts++; return true; };
+        ChatGPTApiOnly.TestConfirmAction = delegate { confirmations++; return false; };
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var close = (Button)Field(form, "closeButton");
+            Check(close.Text == "关闭", "Modeless editor still says Cancel");
+            close.PerformClick();
+            Check(!form.Visible && confirmations == 0 && starts == 0, "Clean close prompted or launched");
+        }
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var model = (TextBox)Field(form, "modelTextBox");
+            model.Text = "example-unsaved";
+            var files = ConfigFiles();
+            ((Button)Field(form, "closeButton")).PerformClick();
+            Check(form.Visible && confirmations == 1 && model.Text == "example-unsaved", "Close discarded draft without approval");
+            form.Close();
+            Check(form.Visible && confirmations == 2, "Title bar close bypassed draft protection");
+            CheckFiles(files);
+            ((Button)Field(form, "customSaveButton")).PerformClick();
+            Check(form.Visible && (string)Field(Call(store, "LoadForLaunch"), "Model") == "example-unsaved", "Save did not persist or closed editor");
+            ((Button)Field(form, "closeButton")).PerformClick();
+            Check(!form.Visible && confirmations == 2, "Saved close prompted or did not close");
+        }
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            var files = ConfigFiles();
+            ((TextBox)Field(form, "modelTextBox")).Text = "example-discard";
+            ChatGPTApiOnly.TestConfirmAction = delegate { return true; };
+            form.Close();
+            Check(!form.Visible, "Confirmed discard did not close");
+            CheckFiles(files);
+        }
+        // Each managed file can be changed externally while the window is open.
+        foreach (string name in new[] { "config.toml", "auth.json", "launcher-profiles/modes.json", ".env" })
+        {
+            Call(store, "Save", data);
+            using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+            {
+                form.Show();
+                File.AppendAllText(Path.Combine(fixture, name), " ", Utf8);
+                var changed = ConfigFiles();
+                ((Button)Field(form, "launchButton")).PerformClick();
+                Check(form.Visible && starts == 0, "External edit was ignored at launch");
+                ((TextBox)Field(form, "modelTextBox")).Text = "example-stale";
+                ((Button)Field(form, "customSaveButton")).PerformClick();
+                Check(((Label)Field(form, "configurationStatus")).Text.Contains("其他窗口"), "External edit not explained");
+                CheckFiles(changed);
+            }
+        }
+        Call(store, "Save", data);
+        File.WriteAllText(Path.Combine(fixture, "auth.json"), "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"\"}", Utf8);
+        Check(!(bool)Property(Call(store, "LoadForLaunch"), "IsValid"), "Empty active key borrowed saved library key");
+        Call(store, "SaveOfficial", String.Empty);
+        File.AppendAllText(Path.Combine(fixture, "config.toml"), "\n", Utf8);
+        string officialConfig = File.ReadAllText(Path.Combine(fixture, "config.toml"));
+        File.WriteAllText(Path.Combine(fixture, "config.toml"), "forced_login_method = \"api\"\n" + officialConfig, Utf8);
+        using (var form = (Form)Activator.CreateInstance(formType, Flags, null, new[] { Call(store, "Load") }, null))
+        {
+            form.Show();
+            ((Button)Field(form, "launchButton")).PerformClick();
+            Check(form.Visible && starts == 0, "Official mode bypassed configuration conflict");
+            var files = ConfigFiles();
+            ChatGPTApiOnly.TestConfirmAction = delegate { return false; };
+            ((TabControl)Field(form, "modeTabs")).SelectedTab = (TabPage)Field(form, "customTab");
+            ((Button)Field(form, "repairButton")).PerformClick();
+            Check(!(bool)Field(form, "repairInProgress") && !Directory.Exists(Path.Combine(fixture, "backups_state")), "Declining history repair still started work");
+            CheckFiles(files);
+        }
+        ChatGPTApiOnly.TestConfirmAction = delegate { return true; };
+        Console.WriteLine("PASS: close/keep/discard/save lifecycle, four-file external edit protection, active-key checks, official conflict and repair confirmation");
+    }
+
     [STAThread]
     private static int Main()
     {
         ChatGPTApiOnly.TestLaunchClient = new Func<bool>(delegate { launchRequests++; return true; });
+        ChatGPTApiOnly.TestConfirmAction = delegate { return true; };
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         string root = Path.Combine(Path.GetTempPath(), "ChatGPTApiOnly-tests-" + Guid.NewGuid().ToString("N"));
@@ -827,6 +916,7 @@ internal static class ProviderSyncTests
             TestSettingsActions(root, data);
             TestUnnamedProfileRename(root, data);
             TestLaunchFailure(root, data);
+            TestApplicationLifecycle(root, data);
 
             UseFixture(root, "large-history");
             string eventLine = "{\"type\":\"event_msg\",\"payload\":\"" + new string('x', 8192) + "\"}\n";

@@ -13,7 +13,7 @@ using Microsoft.Win32;
 
 internal static class ChatGPTApiOnly
 {
-    private static string StartupFailureMessage(string stage, Exception exception)
+    private static string OperationFailureMessage(string stage, Exception exception)
     {
         try
         {
@@ -23,7 +23,7 @@ internal static class ChatGPTApiOnly
                 String.Format("[{0:O}] stage={1}{2}{3}{4}", DateTime.Now, stage, Environment.NewLine, exception, Environment.NewLine), Encoding.UTF8);
         }
         catch { }
-        return String.Format("启动失败（{0}）：{1}{2}详细诊断已写入 .codex\\launcher-profiles\\logs\\launcher.log", stage, exception.Message, Environment.NewLine);
+        return String.Format("操作失败（{0}）：{1}{2}详细诊断已写入 .codex\\launcher-profiles\\logs\\launcher.log", stage, exception.Message, Environment.NewLine);
     }
     private const string PackageRegistryPath =
         @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
@@ -65,11 +65,17 @@ internal static class ChatGPTApiOnly
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        Application.Run(new ConfigForm(ConfigStore.Load()));
+        try { Application.Run(new ConfigForm(ConfigStore.Load())); }
+        catch (Exception exception)
+        {
+            MessageBox.Show(OperationFailureMessage("读取配置", exception), "ChatGPT API Only",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
 #if PROVIDER_SYNC_TEST
     internal static Func<bool> TestLaunchClient;
+    internal static Func<string, bool> TestConfirmAction;
 #endif
 
     private static bool LaunchClient(IWin32Window owner, ConfigData config)
@@ -226,6 +232,8 @@ internal static class ChatGPTApiOnly
     private sealed class ConfigForm : Form
     {
         private string savedDraftSnapshot;
+        private string[] savedFiles;
+        private bool launchSucceeded;
         private readonly Label configurationStatus;
         private readonly TextBox providerNameTextBox;
         private readonly TextBox baseUrlTextBox;
@@ -236,7 +244,7 @@ internal static class ChatGPTApiOnly
         private readonly Button launchButton;
         private readonly Button officialSaveButton;
         private readonly Button customSaveButton;
-        private readonly Button cancelButton;
+        private readonly Button closeButton;
         private readonly Button repairButton;
         private readonly Button storeButton;
         private readonly Button updatesButton;
@@ -288,7 +296,7 @@ internal static class ChatGPTApiOnly
             officialTab = new TabPage("官方账号") { UseVisualStyleBackColor = true };
             customTab = new TabPage("自定义 API") { UseVisualStyleBackColor = true };
 
-            providerNameTextBox = AddField("\u63d0\u4f9b\u8005\u540d\u79f0", 88,
+            providerNameTextBox = AddField("提供者显示名称", 88,
                 String.IsNullOrWhiteSpace(config.ProviderName) ? "custom" : config.ProviderName, 0);
             providerNameTextBox.Width = 286;
             repairButton = new Button
@@ -298,7 +306,7 @@ internal static class ChatGPTApiOnly
                 Text = "\u4fee\u590d\u5bf9\u8bdd",
                 TabIndex = 1,
                 AccessibleName = "\u4fee\u590d\u5bf9\u8bdd",
-                AccessibleDescription = "\u5c06\u672c\u5730\u5386\u53f2\u5bf9\u8bdd\u4fee\u590d\u5230\u5f53\u524d API \u63d0\u4f9b\u8005\u3002"
+                AccessibleDescription = "将本地历史的 provider ID 统一改为 custom；不使用表单显示名称。"
             };
             repairButton.Click += RepairButtonOnClick;
             baseUrlTextBox = AddField("API \u5730\u5740", 130, config.BaseUrl ?? String.Empty, 2);
@@ -357,18 +365,18 @@ internal static class ChatGPTApiOnly
             officialSaveButton.Click += SaveButtonOnClick;
             customSaveButton.Click += SaveButtonOnClick;
 
-            cancelButton = new Button
+            closeButton = new Button
             {
                 Location = new Point(486, 464),
                 Size = new Size(62, 30),
-                Text = "\u53d6\u6d88",
-                DialogResult = DialogResult.Cancel,
+                Text = "关闭",
                 TabIndex = 11
             };
 
             errors = new ErrorProvider { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             errors.ContainerControl = this;
-            CancelButton = cancelButton;
+            closeButton.Click += delegate { Close(); };
+            CancelButton = closeButton;
             storeButton = ClientStore.CreateButton(false, new Point(24, 464), 7, this);
             updatesButton = ClientStore.CreateButton(true, new Point(144, 464), 8, this);
             Controls.Add(heading);
@@ -378,7 +386,7 @@ internal static class ChatGPTApiOnly
             Controls.Add(repairProgressBar);
             Controls.Add(repairProgressLabel);
             Controls.Add(launchButton);
-            Controls.Add(cancelButton);
+            Controls.Add(closeButton);
             Controls.Add(storeButton);
             Controls.Add(updatesButton);
 
@@ -468,10 +476,23 @@ internal static class ChatGPTApiOnly
             ClientSize = new Size(572, 510);
             UpdateAccountStatus();
             savedDraftSnapshot = DraftSnapshot();
+            savedFiles = ConfigStore.ReadFileSnapshot();
+            foreach (Control field in new Control[] { providerNameTextBox, baseUrlTextBox, apiKeyTextBox,
+                modelTextBox, reasoningComboBox, officialProxyTextBox, officialAccountComboBox, customProviderComboBox })
+                field.TextChanged += delegate { ShowDraftChanged(); };
+            modeTabs.SelectedIndexChanged += delegate { ShowDraftChanged(); };
+        }
+
+        private void ShowDraftChanged()
+        {
+            configurationStatus.ForeColor = SystemColors.GrayText;
+            configurationStatus.Text = DraftSnapshot() == savedDraftSnapshot
+                ? "配置未改变，可直接启动。" : "选择或内容已改变。请保存配置后再启动。";
         }
 
         private async void RepairButtonOnClick(object sender, EventArgs e)
         {
+            if (!ConfirmAction("修复对话", "将所有本地历史的 provider ID 统一改为 custom。\r\n不修改正文或标题，不处理云端对话。修改前会备份。\r\n这可能改变官方模式显示的历史列表。是否继续？")) return;
             ShowRepairProgress();
             SetRepairBusy(true);
             repairProgressBar.Maximum = 1;
@@ -534,8 +555,7 @@ internal static class ChatGPTApiOnly
         private void ShowRepairProgress()
         {
             repairProgressCaption.Text = "\u626b\u63cf\u5bf9\u8bdd";
-            SetFooterTop(514);
-            ClientSize = new Size(572, 550);
+            LayoutRepairArea(true);
             repairProgressCaption.Visible = true;
             repairProgressBar.Visible = true;
             repairProgressLabel.Visible = true;
@@ -549,13 +569,23 @@ internal static class ChatGPTApiOnly
             repairProgressBar.Maximum = 1;
             repairProgressBar.Value = 0;
             repairProgressLabel.Text = String.Empty;
-            SetFooterTop(474);
-            ClientSize = new Size(572, 510);
+            LayoutRepairArea(false);
+        }
+
+        private void LayoutRepairArea(bool visible)
+        {
+            float scale = modeTabs.Width / 540F;
+            int footerTop = modeTabs.Bottom + (int)Math.Round((visible ? 46 : 6) * scale);
+            repairProgressCaption.Top = modeTabs.Bottom + (int)Math.Round(12 * scale);
+            repairProgressBar.Top = modeTabs.Bottom + (int)Math.Round(10 * scale);
+            repairProgressLabel.Top = modeTabs.Bottom + (int)Math.Round(11 * scale);
+            SetFooterTop(footerTop);
+            ClientSize = new Size(ClientSize.Width, footerTop + (int)Math.Round(36 * scale));
         }
 
         private void SetFooterTop(int top)
         {
-            foreach (Button button in new[] { storeButton, updatesButton, launchButton, cancelButton })
+            foreach (Button button in new[] { storeButton, updatesButton, launchButton, closeButton })
                 button.Top = top;
         }
 
@@ -572,7 +602,7 @@ internal static class ChatGPTApiOnly
             storeButton.Enabled = !busy;
             updatesButton.Enabled = !busy;
             launchButton.Enabled = !busy;
-            cancelButton.Enabled = !busy;
+            closeButton.Enabled = !busy;
             UseWaitCursor = busy;
         }
 
@@ -583,7 +613,41 @@ internal static class ChatGPTApiOnly
                 e.Cancel = true;
                 return;
             }
+            if (!launchSucceeded && savedDraftSnapshot != null && DraftSnapshot() != savedDraftSnapshot &&
+                !ConfirmAction("关闭", "有尚未保存的修改。放弃这些修改并关闭？\r\n已保存的配置不会撤销。"))
+            {
+                e.Cancel = true;
+                DialogResult = DialogResult.None;
+            }
             base.OnFormClosing(e);
+        }
+
+        private bool ConfirmAction(string action, string message)
+        {
+#if PROVIDER_SYNC_TEST
+            if (TestConfirmAction != null) return TestConfirmAction(action);
+#endif
+            return MessageBox.Show(this, message, action, MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        }
+
+        private bool CheckExternalChanges()
+        {
+            try
+            {
+                string[] latest = ConfigStore.ReadFileSnapshot();
+                for (int i = 0; i < latest.Length; i++)
+                    if (!String.Equals(latest[i], savedFiles[i], StringComparison.Ordinal))
+                        throw new InvalidOperationException("配置已被其他窗口或客户端修改。请保留所需草稿，重新打开设置后再操作。");
+                return true;
+            }
+            catch (Exception exception)
+            {
+                configurationStatus.ForeColor = Color.Firebrick;
+                configurationStatus.Text = exception.Message;
+                errors.SetError(launchButton, exception.Message);
+                return false;
+            }
         }
 
         private TextBox AddField(string labelText, int top, string value, int tabIndex)
@@ -698,6 +762,7 @@ internal static class ChatGPTApiOnly
             if (name == null) return;
             profile["name"] = name;
             PopulateProfileSelectors();
+            ShowDraftChanged();
         }
 
         private static string PromptText(string title, string initial)
@@ -732,9 +797,17 @@ internal static class ChatGPTApiOnly
 
         private string DraftSnapshot()
         {
-            // Include both tabs and all library mutations, without writing or normalizing the draft.
-            return new JavaScriptSerializer().Serialize(new object[] {
-                profileDraft, modeTabs.SelectedTab == officialTab, officialProxyTextBox.Text,
+            // Normalize a copy so checking changes never modifies the editable library.
+            var serializer = new JavaScriptSerializer();
+            var snapshot = (Dictionary<string, object>)serializer.DeserializeObject(serializer.Serialize(profileDraft));
+            var selected = ConfigStore.SelectedProfile(snapshot, "custom_providers");
+            if (selected != null) ConfigStore.UpdateCustomDraft(selected, new ConfigData {
+                ProviderName = providerNameTextBox.Text.Trim(), BaseUrl = baseUrlTextBox.Text.Trim(),
+                ApiKey = apiKeyTextBox.Text.Trim(), Model = modelTextBox.Text.Trim(),
+                ReasoningEffort = reasoningComboBox.Text.Trim()
+            });
+            return serializer.Serialize(new object[] {
+                snapshot, modeTabs.SelectedTab == officialTab, officialProxyTextBox.Text,
                 providerNameTextBox.Text, baseUrlTextBox.Text, apiKeyTextBox.Text,
                 modelTextBox.Text, reasoningComboBox.Text
             });
@@ -747,9 +820,11 @@ internal static class ChatGPTApiOnly
             LoadCustomProfileIntoFields();
             officialProxyTextBox.Text = ConfigStore.Load().OfficialProxyUrl ?? String.Empty;
             savedDraftSnapshot = DraftSnapshot();
+            savedFiles = ConfigStore.ReadFileSnapshot();
             UseWaitCursor = false;
             launchButton.Enabled = true;
             launchButton.Text = "启动";
+            customSaveButton.Text = "保存配置";
             configurationStatus.ForeColor = SystemColors.GrayText;
             configurationStatus.Text = "配置已保存。可继续编辑，或点击“启动”。";
         }
@@ -762,10 +837,12 @@ internal static class ChatGPTApiOnly
                 configurationStatus.Text = "有未保存的修改，请先点击当前 Tab 的“保存配置”。";
                 return;
             }
-            ConfigData saved = ConfigStore.Load();
-            // An official account without tokens must still be able to open the login UI.
-            if (!String.IsNullOrEmpty(saved.ProfileError) ||
-                (!saved.OfficialMode && !saved.IsValid))
+            if (!CheckExternalChanges()) return;
+            ConfigData saved = ConfigStore.LoadForLaunch();
+            // Official login may have no tokens, but explicit config conflicts still block it.
+            if (!String.IsNullOrEmpty(saved.ProfileError) || !saved.ConfigReadable ||
+                (!String.IsNullOrEmpty(saved.CredentialsStore) && saved.CredentialsStore != "file") ||
+                (saved.OfficialMode ? (saved.AuthReadable && saved.AuthMode != "chatgpt") : !saved.IsValid))
             {
                 configurationStatus.ForeColor = Color.Firebrick;
                 configurationStatus.Text = "已保存配置不可用，请检查并保存配置后再启动。";
@@ -777,6 +854,7 @@ internal static class ChatGPTApiOnly
             {
                 if (LaunchClient(this, saved))
                 {
+                    launchSucceeded = true;
                     Close();
                     return;
                 }
@@ -787,7 +865,7 @@ internal static class ChatGPTApiOnly
             {
                 configurationStatus.ForeColor = Color.Firebrick;
                 configurationStatus.Text = "启动失败：" + exception.Message;
-                errors.SetError(launchButton, StartupFailureMessage("启动客户端", exception));
+                errors.SetError(launchButton, OperationFailureMessage("启动客户端", exception));
             }
             finally { launchButton.Enabled = true; }
         }
@@ -795,6 +873,7 @@ internal static class ChatGPTApiOnly
         private void SaveButtonOnClick(object sender, EventArgs e)
         {
             errors.Clear();
+            if (!CheckExternalChanges()) return;
             if (modeTabs.SelectedTab == officialTab)
             {
                 string stage = "校验官方代理";
@@ -816,7 +895,7 @@ internal static class ChatGPTApiOnly
                 }
                 catch (Exception exception)
                 {
-                    MessageBox.Show(this, StartupFailureMessage(stage, exception), "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this, OperationFailureMessage(stage, exception), "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 return;
             }
@@ -850,7 +929,7 @@ internal static class ChatGPTApiOnly
                     AuthMode = "apikey"
                 };
                 launchButton.Enabled = false;
-                launchButton.Text = "\u6b63\u5728\u4fdd\u5b58\u2026";
+                customSaveButton.Text = "正在保存…";
                 UseWaitCursor = true;
                 Refresh();
 
@@ -867,8 +946,9 @@ internal static class ChatGPTApiOnly
                 UseWaitCursor = false;
                 launchButton.Enabled = true;
                 launchButton.Text = "启动";
+                customSaveButton.Text = "保存配置";
                 MessageBox.Show(this,
-                    StartupFailureMessage("保存自定义配置", exception),
+                    OperationFailureMessage("保存自定义配置", exception),
                     "ChatGPT API Only", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -944,6 +1024,22 @@ internal static class ChatGPTApiOnly
         private static string AuthPath { get { return Path.Combine(ConfigDirectory, "auth.json"); } }
         private static string DotEnvPath { get { return Path.Combine(ConfigDirectory, ".env"); } }
         private static string ProfilesPath { get { return Path.Combine(ConfigDirectory, "launcher-profiles", "modes.json"); } }
+
+        internal static string[] ReadFileSnapshot()
+        {
+            return new[] { ReadText(ConfigPath), ReadText(AuthPath), ReadText(ProfilesPath), ReadText(DotEnvPath) };
+        }
+
+        internal static ConfigData LoadForLaunch()
+        {
+            var data = new ConfigData();
+            LoadToml(data);
+            LoadAuth(data);
+            try { data.OfficialProxyUrl = ProfileString(ReadProfiles(), "official_proxy_url"); }
+            catch (Exception exception) { data.ProfileError = exception.Message; }
+            if (File.Exists(AuthPath) && !data.AuthReadable) data.ProfileError = "auth.json 无法读取";
+            return data;
+        }
 
         internal static ConfigData Load()
         {
