@@ -113,13 +113,20 @@ internal static class ChatGPTApiOnly
             if (proxy.Length > 0)
             {
                 start.Arguments = Quote("--proxy-server=" + proxy);
-                foreach (string name in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY" })
-                    start.EnvironmentVariables[name] = proxy;
-                start.EnvironmentVariables["NO_PROXY"] = "localhost,127.0.0.1,::1";
-                start.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "1";
+                foreach (var variable in OfficialProxyEnvironment(proxy))
+                    start.EnvironmentVariables[variable.Key] = variable.Value;
             }
         }
         return start;
+    }
+
+    private static Dictionary<string, string> OfficialProxyEnvironment(string proxy)
+    {
+        return new Dictionary<string, string>
+        {
+            { "HTTP_PROXY", proxy }, { "HTTPS_PROXY", proxy }, { "ALL_PROXY", proxy },
+            { "NO_PROXY", "localhost,127.0.0.1,::1" }, { "NODE_USE_ENV_PROXY", "1" }
+        };
     }
 
     private static bool EnsureClientInstalled(IWin32Window owner)
@@ -1126,6 +1133,7 @@ internal static class ChatGPTApiOnly
 
         private static string ConfigPath { get { return Path.Combine(ConfigDirectory, "config.toml"); } }
         private static string AuthPath { get { return Path.Combine(ConfigDirectory, "auth.json"); } }
+        private static string DotEnvPath { get { return Path.Combine(ConfigDirectory, ".env"); } }
         private static string ProfilesPath { get { return Path.Combine(ConfigDirectory, "launcher-profiles", "modes.json"); } }
 
         internal static ConfigData Load()
@@ -1417,6 +1425,7 @@ internal static class ChatGPTApiOnly
             if (target == null) throw new InvalidOperationException("请先添加配置。");
             string proxy = official ? NormalizeOfficialProxyUrl(ProfileString(next, "official_proxy_url")) : ProfileString(next, "official_proxy_url");
             ValidateModeSwitch(official);
+            UpdateProxyDotEnv(ReadText(DotEnvPath), official ? proxy : String.Empty);
             var current = new ConfigData();
             LoadToml(current);
             var saved = ReadProfiles();
@@ -1460,7 +1469,7 @@ internal static class ChatGPTApiOnly
                 toml = UpdateToml(clean.TrimEnd() + Environment.NewLine + (ProfileString(target, "model_providers_toml") ?? String.Empty), data);
                 auth = new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "auth_mode", "apikey" }, { "OPENAI_API_KEY", data.ApiKey } });
             }
-            if (commit) CommitMode(toml, auth, next);
+            if (commit) CommitMode(toml, auth, next, official ? proxy : String.Empty);
         }
 
         private static bool HasOfficialTokens(Dictionary<string, object> auth)
@@ -1685,13 +1694,47 @@ internal static class ChatGPTApiOnly
             return null;
         }
 
-        private static void CommitMode(string toml, string auth, Dictionary<string, object> profiles)
+        private static string UpdateProxyDotEnv(string original, string proxy)
+        {
+            const string begin = "# BEGIN CHATGPT API ONLY PROXY";
+            const string end = "# END CHATGPT API ONLY PROXY";
+            string text = original ?? String.Empty;
+            MatchCollection markers = Regex.Matches(text, "(?m)^# (?:BEGIN|END) CHATGPT API ONLY PROXY\\r?$");
+            if (markers.Count != 0)
+            {
+                if (markers.Count != 2 || markers[0].Value.TrimEnd('\r') != begin ||
+                    markers[1].Value.TrimEnd('\r') != end)
+                    throw new InvalidOperationException(".env 中的启动器代理标记不完整或重复，请先核对该文件；未保存配置。");
+                int start = markers[0].Index;
+                // The separator belongs to our block, preserving the original final newline.
+                if (start > 0 && text[start - 1] == '\n')
+                {
+                    start--;
+                    if (start > 0 && text[start - 1] == '\r') start--;
+                }
+                int finish = markers[1].Index + markers[1].Length;
+                if (finish < text.Length && text[finish] == '\n') finish++;
+                string suffix = text.Substring(finish);
+                text = text.Substring(0, start);
+                if (text.Length > 0 && suffix.Length > 0 && !text.EndsWith("\n") && !suffix.StartsWith("\n") && !suffix.StartsWith("\r\n"))
+                    text += "\n";
+                text += suffix;
+            }
+            if (String.IsNullOrEmpty(proxy)) return original == null ? null : text;
+            string newline = text.Contains("\r\n") ? "\r\n" : "\n";
+            var block = new StringBuilder(text + newline + begin + newline);
+            foreach (var variable in OfficialProxyEnvironment(proxy))
+                block.Append(variable.Key).Append('=').Append(variable.Value).Append(newline);
+            return block.Append(end).Append(newline).ToString();
+        }
+
+        private static void CommitMode(string toml, string auth, Dictionary<string, object> profiles, string proxy)
         {
             Directory.CreateDirectory(ConfigDirectory);
             Directory.CreateDirectory(Path.GetDirectoryName(ProfilesPath));
-            string[] paths = { ProfilesPath, AuthPath, ConfigPath };
-            string[] original = { ReadText(ProfilesPath), ReadText(AuthPath), ReadText(ConfigPath) };
-            string[] updated = { new JavaScriptSerializer().Serialize(profiles), auth, toml };
+            string[] paths = { DotEnvPath, ProfilesPath, AuthPath, ConfigPath };
+            string[] original = { ReadText(DotEnvPath), ReadText(ProfilesPath), ReadText(AuthPath), ReadText(ConfigPath) };
+            string[] updated = { UpdateProxyDotEnv(original[0], proxy), new JavaScriptSerializer().Serialize(profiles), auth, toml };
             int attempted = -1;
             try
             {

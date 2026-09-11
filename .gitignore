@@ -9,6 +9,7 @@ ChatGPTApiOnly.test.exe
 # Local Codex configuration and backups
 config.toml
 auth.json
+.env
 *.bak
 backups_state/
 launcher-profiles/

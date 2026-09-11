@@ -5,7 +5,7 @@
 **管理并切换 ChatGPT 桌面应用的多个官方账号和多套自定义 API 配置，同时处理两种模式下的代理与启动问题。**
 
 - **多账号、多套 API 切换**：保存多个官方账号的登录凭据，以及多套 API 地址、Key、模型和思考层级，选中后应用并启动客户端。
-- **官方账号独立代理**：为客户端设置 HTTP 代理，无需开启 Windows 系统代理或 TUN，也不修改系统代理设置。
+- **官方账号独立代理**：为桌面客户端和终端中的 `codex` 设置 HTTP 代理，无需开启 Windows 系统代理或 TUN，也不修改系统代理设置。
 - **自定义 API 启动加速**：让 Electron 外壳对相关 OpenAI/ChatGPT 域名的请求快速失败，避免网络超时阻塞启动；内置 Codex 后端仍正常访问自定义 API。
 
 启动器适用于 Windows，下载单个 EXE 即可运行，无需安装启动器或额外运行库。
@@ -65,6 +65,16 @@
 
 修改代理后需点击“应用并启动”，使新设置进入客户端进程。浏览器中的外部登录页面和 Microsoft Store 是独立应用，不受启动器代理设置控制；自行清理环境的工具、WSL 和远程主机也不保证继承代理。
 
+### 终端 Codex：跟随当前模式使用代理
+
+保存官方代理后，在终端直接运行 `codex` 即可使用同一代理，无需额外脚本或命令别名。启动器将代理变量写入 Codex 目录 `.env` 文件中的 `CHATGPT API ONLY PROXY` 标记区块；Codex 启动时自行读取它，设置自身的进程环境，不修改父终端环境。
+
+切换到自定义 API，或清空官方代理后应用，会移除该标记区块，保留原有 `.env` 内容和官方代理偏好（清空时除外）。若文件原先没有其他内容，移除后可以保留为空文件。文件中原有的代理变量会恢复生效，因此禁用本工具的代理不等于强制所有请求直连。
+
+`.env` 中的变量会覆盖启动时继承的同名变量，且桌面内置 app-server 也会读取该文件。CLI 和桌面后端使用同一配置目录时共享这项设置；已运行的 CLI 需退出后重新运行。设置了 `CODEX_HOME` 的 CLI 读取其指定目录，只有该目录与启动器使用的目录相同才会跟随切换。
+
+Codex CLI 和桌面内置后端 0.153.4 已通过官方账号联网实测，包含有效与无效代理的反向对照。若启用了 Codex 的实验性 `respect_system_proxy`，系统代理或 PAC 决策可能优先于环境代理；需要独立环境代理时应核对该选项。
+
 ### 自定义 API：减少不可达请求造成的等待
 
 客户端启动时，Electron 外壳会访问一些 OpenAI/ChatGPT 云端地址。当这些地址不可达时，等待超时可能让启动卡住约一分钟。启动器使相关外壳请求立即失败；原有典型测量中，启动等待由约 60 秒缩短到约 7 秒，实际时间取决于客户端版本和运行环境。
@@ -100,10 +110,11 @@
 | --- | --- |
 | `config.toml` | 当前生效的 provider、模型和连接设置 |
 | `auth.json` | 当前生效的官方凭据或 API Key |
+| `.env` | Codex 启动时读取的进程环境；启动器仅管理其中带标记的官方代理区块 |
 | `launcher-profiles/modes.json` | 已保存的多个官方账号、多套 API 配置、当前选择，以及官方模式的模型和代理设置 |
 | `backups_state/provider-sync` | 历史对话修复前的备份 |
 
-这些文件包含私人配置，不进入源码仓库。多文件保存失败时，启动器尝试恢复原状态并阻止启动。
+这些文件包含私人配置，不进入源码仓库。`.env` 与凭据、活动配置、配置库一起保存；任一文件保存失败时，启动器尝试恢复原状态并阻止启动。代理区块标记缺失、顺序错误或重复时，在停止客户端和保存前提示冲突。
 
 已有配置中的显式登录限制、非文件凭据存储、选中的 `profile` 或与目标模式冲突的路由覆盖，可能阻止切换。启动器会在停止客户端和写入配置前提示，保留原配置供核对。
 
@@ -159,7 +170,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
 - 官方模式使用内置 `openai` provider；所有自定义 API 使用 `custom`。表单中的“提供者名称”只写入 `[model_providers.custom].name`。
 - 官方登录和刷新交给客户端，认证类型由 `auth.json` 决定。启动器不写入 `forced_login_method`；`cli_auth_credentials_store` 默认不写，已有 `file` 配置保留，其他显式存储方式提示冲突。
 - 切入官方模式时保存并移除活动配置中的完整 `model_providers` TOML 片段；切回自定义模式时恢复目标 API 条目的片段，再更新表单字段，保留未知字段、其他提供者和嵌套表。
-- 官方代理通过 Electron 的 `--proxy-server` 和子进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NODE_USE_ENV_PROXY=1` 生效，`NO_PROXY=localhost,127.0.0.1,::1` 保持本机通信直连。代理地址仅保存在配置库的 `official_proxy_url`。
+- 官方代理通过 Electron 的 `--proxy-server` 和子进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NODE_USE_ENV_PROXY=1` 生效，`NO_PROXY=localhost,127.0.0.1,::1` 保持本机通信直连。配置库的 `official_proxy_url` 保存偏好，官方模式同时将这些变量同步到 `.env` 管理区块，供 CLI 和内置后端启动时读取。
 - 历史修复逐行处理 `sessions`、`archived_sessions` 中 rollout JSONL 的 `session_meta.payload.model_provider`，并以事务更新 SQLite 的 `threads.model_provider` 和存在时的 `local_thread_catalog.model_provider`。数据库失败时恢复已改写的 rollout。
 - 启动器不添加单实例锁，重复启动交给官方客户端处理。
 

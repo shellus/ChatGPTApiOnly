@@ -374,6 +374,87 @@ internal static class ProviderSyncTests
         Console.WriteLine("PASS: scoped Chromium/backend/Node proxy, parent environment unchanged, validation, mode persistence, rollback and disabling");
     }
 
+    private static void TestCliProxyDotEnv(string root, object customData)
+    {
+        Type store = App.GetNestedType("ConfigStore", Flags);
+        const string proxy = "http://127.0.0.1:17890";
+        foreach (string original in new[] { "", "# example\nEXAMPLE_VALUE='keep # text'", "EXAMPLE_VALUE=keep\r\n",
+            "HTTPS_PROXY=http://example.invalid:8080\nNODE_USE_ENV_PROXY=0\nEXAMPLE_VALUE=keep\n" })
+        {
+            UseFixture(root, "dotenv-" + Guid.NewGuid().ToString("N"));
+            string dotenv = Path.Combine(fixture, ".env");
+            File.WriteAllText(dotenv, original, Utf8);
+            var parent = Environment.GetEnvironmentVariables();
+            Call(store, "SaveOfficial", proxy);
+            string active = File.ReadAllText(dotenv);
+            Check(active.StartsWith(original, StringComparison.Ordinal) &&
+                active.Contains("HTTPS_PROXY=" + proxy) && active.Contains("HTTP_PROXY=" + proxy) &&
+                active.Contains("ALL_PROXY=" + proxy) && active.Contains("NODE_USE_ENV_PROXY=1") &&
+                active.Contains("NO_PROXY=localhost,127.0.0.1,::1"), "CLI proxy block missing or original dotenv changed");
+            Check(Environment.GetEnvironmentVariables().Count == parent.Count, "Saving dotenv added parent variables");
+            foreach (System.Collections.DictionaryEntry entry in parent)
+                Check(Environment.GetEnvironmentVariable((string)entry.Key) == (string)entry.Value, "Saving dotenv changed parent environment");
+            Call(store, "SaveOfficial", proxy);
+            Check(File.ReadAllText(dotenv) == active, "Repeated proxy save duplicated or changed dotenv block");
+            Call(store, "SaveOfficial", "http://localhost:17891");
+            Check(!File.ReadAllText(dotenv).Contains("HTTPS_PROXY=" + proxy), "Changed proxy retained stale managed address");
+            Call(store, "Save", customData);
+            Check(File.ReadAllText(dotenv) == original, "Custom mode did not restore original dotenv");
+            Check((string)Field(Call(store, "Load"), "OfficialProxyUrl") == "http://localhost:17891", "Custom mode erased proxy preference");
+            Call(store, "SaveOfficial", proxy);
+            Call(store, "SaveOfficial", String.Empty);
+            Check(File.ReadAllText(dotenv) == original, "Disabling proxy changed user dotenv values");
+        }
+        UseFixture(root, "dotenv-rollback");
+        string withSuffix = (string)Call(store, "UpdateProxyDotEnv", "EXAMPLE_FIRST=one", proxy) + "EXAMPLE_LAST=two\n";
+        Check((string)Call(store, "UpdateProxyDotEnv", withSuffix, String.Empty) == "EXAMPLE_FIRST=one\nEXAMPLE_LAST=two\n",
+            "Removing managed block joined user entries across its boundaries");
+        string envPath = Path.Combine(fixture, ".env");
+        Call(store, "Save", customData);
+        Check(!File.Exists(envPath), "Custom mode created an unnecessary dotenv file");
+        string config = Path.Combine(fixture, "config.toml"), auth = Path.Combine(fixture, "auth.json"),
+            profiles = Path.Combine(fixture, "launcher-profiles", "modes.json");
+        string beforeConfig = File.ReadAllText(config), beforeAuth = File.ReadAllText(auth), beforeProfiles = File.ReadAllText(profiles);
+        bool failed = false;
+        using (var locked = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "SaveOfficial", proxy); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && !File.Exists(envPath) && File.ReadAllText(config) == beforeConfig &&
+            File.ReadAllText(auth) == beforeAuth && File.ReadAllText(profiles) == beforeProfiles,
+            "Late save failure did not remove new dotenv and restore all mode files");
+        const string originalEnv = "# example\nEXAMPLE_KEEP=yes\n";
+        File.WriteAllText(envPath, originalEnv, Utf8);
+        failed = false;
+        using (var locked = new FileStream(profiles, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "SaveOfficial", proxy); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && File.ReadAllText(envPath) == originalEnv, "Failure did not restore existing dotenv");
+        failed = false;
+        using (var locked = new FileStream(envPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            try { Call(store, "SaveOfficial", proxy); } catch (TargetInvocationException) { failed = true; }
+        }
+        Check(failed && File.ReadAllText(envPath) == originalEnv && File.ReadAllText(config) == beforeConfig &&
+            File.ReadAllText(auth) == beforeAuth && File.ReadAllText(profiles) == beforeProfiles,
+            "Locked dotenv changed active mode files");
+        foreach (string malformed in new[] { "# BEGIN CHATGPT API ONLY PROXY\n",
+            "# END CHATGPT API ONLY PROXY\n", "# END CHATGPT API ONLY PROXY\n# BEGIN CHATGPT API ONLY PROXY\n",
+            "# BEGIN CHATGPT API ONLY PROXY\n# BEGIN CHATGPT API ONLY PROXY\n# END CHATGPT API ONLY PROXY\n" })
+        {
+            File.WriteAllText(envPath, malformed, Utf8);
+            var draft = Call(store, "ReadEditableProfiles");
+            string id = (string)((Dictionary<string, object>)draft)["selected_custom"];
+            failed = false;
+            try { Call(store, "ValidateProfiles", draft, false, id); } catch (TargetInvocationException) { failed = true; }
+            Check(failed && File.ReadAllText(envPath) == malformed && File.ReadAllText(config) == beforeConfig &&
+                File.ReadAllText(auth) == beforeAuth && File.ReadAllText(profiles) == beforeProfiles,
+                "Malformed dotenv block was not rejected before applying");
+        }
+        Console.WriteLine("PASS: CLI dotenv proxy, preservation, idempotence, mode switch, disable, preflight and four-file rollback");
+    }
+
     private static void TestProfileLibrary(string root)
     {
         UseFixture(root, "profile-library");
@@ -534,6 +615,7 @@ internal static class ProviderSyncTests
             TestOAuthModes(root, data);
             TestProviderProfiles(root, data);
             TestOfficialProxy(root, data);
+            TestCliProxyDotEnv(root, data);
             TestProfileLibrary(root);
 
             UseFixture(root, "large-history");
