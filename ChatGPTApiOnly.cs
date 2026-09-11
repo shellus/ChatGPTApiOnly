@@ -1255,7 +1255,7 @@ internal static class ChatGPTApiOnly
                     credentials["OPENAI_API_KEY"] = null;
                     auth = new JavaScriptSerializer().Serialize(credentials);
                 }
-                if (current.OfficialMode && String.IsNullOrWhiteSpace(providers)) toml = originalToml;
+                if (current.OfficialMode) toml = clean;
                 else
                 {
                     var lines = new List<string>(Regex.Split(clean, "\\r?\\n"));
@@ -1268,6 +1268,16 @@ internal static class ChatGPTApiOnly
                     SetTopLevel(lines, "model_reasoning_effort", QuoteToml(String.IsNullOrWhiteSpace(effort) ? "medium" : effort));
                     toml = String.Join(Environment.NewLine, lines.ToArray());
                 }
+                // Keep the historical provider ID resolvable, using the active official auth
+                // and its default endpoint. Custom routing/headers remain only in the snapshot.
+                var officialLines = new List<string>(Regex.Split(toml.TrimEnd(), "\\r?\\n"));
+                var custom = SelectedProfile(next, "custom_providers");
+                string providerName = custom == null ? null : ProfileData(custom).ProviderName;
+                SetSectionValue(officialLines, "model_providers.custom", "name",
+                    QuoteToml(String.IsNullOrWhiteSpace(providerName) ? "custom" : providerName));
+                SetSectionValue(officialLines, "model_providers.custom", "wire_api", "\"responses\"");
+                SetSectionValue(officialLines, "model_providers.custom", "requires_openai_auth", "true");
+                toml = String.Join(Environment.NewLine, officialLines.ToArray()) + Environment.NewLine;
             }
             else
             {
@@ -1482,8 +1492,6 @@ internal static class ChatGPTApiOnly
                 if (line.StartsWith("["))
                 {
                     topLevel = false;
-                    if (official && IsProviderTable(line))
-                        return "model_providers tables must be saved outside the official configuration";
                     continue;
                 }
                 if (!topLevel) continue;

@@ -18,7 +18,7 @@
 - 官方独立代理偏好保存在模式文件，同时同步到 Codex `.env` 的 `CHATGPT API ONLY PROXY` 标记区块供 CLI 读取；桌面启动参数和子进程环境注入保持不变。不得修改 Windows 系统代理或用户环境变量；自定义模式或禁用代理时只移除管理区块，保留原有 `.env` 内容。回归覆盖地址校验、父进程环境不变、幂等、禁用、模式保留、异常标记预检及包含 `.env` 的四文件保存失败回滚。
 - 切换前保留当前凭证及各模式模型设置，官方退出登录后不得恢复旧令牌。多文件保存失败必须尝试恢复原状态并阻止启动。
 - 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
-- 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`，从活动配置移除；自定义模式恢复片段后更新表单字段。保留未知字段、其他提供者及嵌套表，重复保存不得清空快照。
+- 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`；活动配置保留 `[model_providers.custom]` 的名称、`wire_api = "responses"` 与 `requires_openai_auth = true`，供历史对话解析，不携带自定义地址、Key、认证覆盖或请求头。自定义模式恢复完整片段后更新表单字段。快照保留未知字段、其他提供者及嵌套表，重复保存不得用官方模式的精简定义覆盖快照。
 - 数据格式变更只做一次性迁移，不在程序中保留旧版本兼容分支或升级测试。
 - 不静默删除 profile 或路由覆盖配置；发现与目标模式冲突时，在落盘前提示并阻止切换。
 - 历史对话修复只能由“修复对话”按钮显式触发。进度必须来自真实工作量，并以临时 `n/total` 进度区展示。

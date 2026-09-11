@@ -292,15 +292,23 @@ internal static class ProviderSyncTests
             "description = \"literal ''' example\"\n" +
             "array = [\n[\"example\"],\n[\"model_providers\"],\n]\n";
         string unrelated = "[features]\nexample = true\n";
-        string initial = File.ReadAllText(config).Replace("[model_providers.custom]", "[model_providers.\"custom\"] # example") + extras + unrelated;
+        string initial = File.ReadAllText(config).Replace("[model_providers.custom]", "[model_providers.\"custom\"] # example") +
+            "env_key = 'EXAMPLE_API_KEY'\nexperimental_bearer_token = 'example-token'\n" + extras + unrelated;
         File.WriteAllText(config, initial, Utf8);
         Call(store, "SaveOfficial", String.Empty);
-        Check(!File.ReadAllText(config).Contains("model_providers") && File.ReadAllText(config).Contains(unrelated.Replace("\n", Environment.NewLine)),
-            "Official config retained provider tables or lost unrelated tables");
+        string officialToml = File.ReadAllText(config);
+        Check(officialToml.Contains("[model_providers.custom]") && officialToml.Contains("name = \"example\"") &&
+            officialToml.Contains("wire_api = \"responses\"") && officialToml.Contains("requires_openai_auth = true") &&
+            !officialToml.Contains("base_url") && !officialToml.Contains("http_headers") &&
+            !officialToml.Contains("env_key") && !officialToml.Contains("experimental_bearer_token") &&
+            officialToml.Contains(unrelated.Replace("\n", Environment.NewLine)),
+            "Official config lost custom provider definition, leaked custom routing/auth or lost unrelated tables");
+        Check((string)Call(store, "GetModeConflict", officialToml, true) == null, "Official historical provider rejected as conflict");
         var saved = (Dictionary<string, object>)Call(store, "ReadProfiles");
         Check(((string)Call(store, "SelectedValue", saved, "model_providers_toml")).Contains(extras), "Provider snapshot lost unknown/nested/multiline values");
         string snapshot = (string)Call(store, "SelectedValue", saved, "model_providers_toml");
         Call(store, "SaveOfficial", String.Empty);
+        Check(File.ReadAllText(config) == officialToml, "Repeated official save changed provider definition");
         saved = (Dictionary<string, object>)Call(store, "ReadProfiles");
         Check((string)Call(store, "SelectedValue", saved, "model_providers_toml") == snapshot, "Repeated official save erased providers");
         object loaded = Call(store, "Load");
@@ -321,7 +329,7 @@ internal static class ProviderSyncTests
         }
         Check(failed && File.ReadAllText(config) == restored && File.ReadAllText(auth) == beforeAuth &&
             File.ReadAllText(profiles) == beforeProfiles, "Provider removal failure did not restore all files");
-        Console.WriteLine("PASS: complete provider snapshot, clean official config, repeated saves, form restore, quoted/nested/multiline tables and rollback");
+        Console.WriteLine("PASS: complete provider snapshot, official custom definition without API routing/auth, repeated saves, form restore and rollback");
     }
 
     private static void TestOfficialProxy(string root, object customData)
@@ -494,8 +502,9 @@ internal static class ProviderSyncTests
         var secondEntry = (Dictionary<string, object>)Call(store, "SelectedProfile", profiles, "official_accounts");
         secondEntry["official_auth"] = ((string)firstAccount["official_auth"]).Replace("example-first", "example-second");
         string configBefore = File.ReadAllText(Path.Combine(fixture, "config.toml"));
-        DateTime configTimestamp = File.GetLastWriteTimeUtc(Path.Combine(fixture, "config.toml"));
         Call(store, "ApplyProfiles", profiles, true, account);
+        configBefore = File.ReadAllText(Path.Combine(fixture, "config.toml"));
+        DateTime configTimestamp = File.GetLastWriteTimeUtc(Path.Combine(fixture, "config.toml"));
         Check(File.ReadAllText(Path.Combine(fixture, "auth.json")).Contains("example-first-access"), "First account not activated");
         profiles = (Dictionary<string, object>)Call(store, "ReadProfiles");
         File.WriteAllText(Path.Combine(fixture, "auth.json"), ((string)firstAccount["official_auth"]).Replace("example-first-refresh", "example-refreshed"), Utf8);

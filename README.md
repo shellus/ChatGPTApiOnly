@@ -170,7 +170,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed' }
 
 - 官方模式使用内置 `openai` provider；所有自定义 API 使用 `custom`。表单中的“提供者名称”只写入 `[model_providers.custom].name`。
 - 官方登录和刷新交给客户端，认证类型由 `auth.json` 决定。启动器不写入 `forced_login_method`；`cli_auth_credentials_store` 默认不写，已有 `file` 配置保留，其他显式存储方式提示冲突。
-- 切入官方模式时保存并移除活动配置中的完整 `model_providers` TOML 片段；切回自定义模式时恢复目标 API 条目的片段，再更新表单字段，保留未知字段、其他提供者和嵌套表。
+- 切入官方模式时保存完整 `model_providers` TOML 快照，活动配置仍保留精简的 `[model_providers.custom]` 定义，使历史中的 `custom` ID 可以解析。该定义保留名称、Responses 协议与官方认证标记，不携带自定义 API 地址、认证覆盖或请求头；请求地址由当前官方认证决定。切回自定义模式时恢复目标 API 条目的完整片段，再更新表单字段，保留未知字段、其他提供者和嵌套表。
 - 官方代理通过 Electron 的 `--proxy-server` 和子进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NODE_USE_ENV_PROXY=1` 生效，`NO_PROXY=localhost,127.0.0.1,::1` 保持本机通信直连。配置库的 `official_proxy_url` 保存偏好，官方模式同时将这些变量同步到 `.env` 管理区块，供 CLI 和内置后端启动时读取。
 - 历史修复逐行处理 `sessions`、`archived_sessions` 中 rollout JSONL 的 `session_meta.payload.model_provider`，并以事务更新 SQLite 的 `threads.model_provider` 和存在时的 `local_thread_catalog.model_provider`。数据库失败时恢复已改写的 rollout。
 - 启动器不添加单实例锁，重复启动交给官方客户端处理。
