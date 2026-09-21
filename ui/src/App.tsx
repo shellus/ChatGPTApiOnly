@@ -214,7 +214,7 @@ export default function App() {
   return (
     <Theme
       appearance={theme}
-      accentColor="teal"
+      accentColor="iris"
       grayColor="slate"
       radius="medium"
       scaling="100%"
@@ -226,11 +226,19 @@ export default function App() {
             <p>管理官方账号与自定义 API，保存后再启动。</p>
           </div>
           <Button
+            className="theme-toggle"
             variant="soft"
             color="gray"
+            aria-label={theme === "dark" ? "浅色" : "深色"}
+            title={theme === "dark" ? "切换到浅色外观" : "切换到深色外观"}
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           >
-            {theme === "dark" ? "浅色" : "深色"}
+            <span className="theme-track" aria-hidden="true">
+              <span className="theme-thumb" />
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></svg>
+              <svg viewBox="0 0 24 24"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" /></svg>
+            </span>
+            <span>{theme === "dark" ? "浅色" : "深色"}</span>
           </Button>
         </header>
         <section className="content" aria-busy={!!busy}>
@@ -243,7 +251,7 @@ export default function App() {
                 })
               }
             >
-              <Tabs.List aria-label="连接方式">
+              <Tabs.List aria-label="连接方式" className="mode-switch" data-mode={mode}>
                 <Tabs.Trigger value="official" disabled={!!busy}>
                   官方账号
                 </Tabs.Trigger>
@@ -416,7 +424,7 @@ export default function App() {
                 )}
                 <div className="save-row">
                   <Button
-                    highContrast
+                    className="primary-action"
                     onClick={() => void save()}
                     disabled={!profile || !!busy}
                   >
@@ -519,7 +527,7 @@ export default function App() {
             >
               关闭
             </Button>
-            <Button highContrast onClick={launch} disabled={!saved || !!busy}>
+            <Button className="launch-action" onClick={launch} disabled={!saved || !!busy}>
               {busy === "启动客户端" ? "正在启动…" : "启动"}
             </Button>
           </div>
@@ -543,7 +551,7 @@ export default function App() {
               </AlertDialog.Cancel>
               <AlertDialog.Action>
                 <Button
-                  highContrast
+                  className="primary-action"
                   onClick={() => {
                     const run = confirmation?.run;
                     setConfirmation(undefined);

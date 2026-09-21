@@ -17,6 +17,158 @@ input {
   --default-font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
   --cursor-button: pointer;
+  --color-background: #f7f6fc;
+  --surface-control: #ffffff;
+  --surface-track: #e9e6f5;
+  --surface-footer: #efedf8;
+  --action: #6554cf;
+  --action-hover: #5543be;
+  --action-text: #ffffff;
+  --launch: #ffad9b;
+  --launch-hover: #ff9984;
+  --launch-text: #55281f;
+  --gray-11: #646179;
+  --gray-12: #29263e;
+  --gray-a11: var(--gray-11);
+  --focus-8: #8271e0;
+  --control-border: #b2aaca;
+}
+.radix-themes.dark {
+  --color-background: #2b293b;
+  --surface-control: #363449;
+  --surface-track: #3b374f;
+  --surface-footer: #302d42;
+  --action: #b8aaff;
+  --action-hover: #c9beff;
+  --action-text: #302455;
+  --launch: #ffae9c;
+  --launch-hover: #ffc1b2;
+  --gray-11: #c2bdd4;
+  --gray-12: #f3efff;
+  --control-border: #827998;
+  --focus-8: #bcadff;
+}
+.app .rt-TextFieldRoot,
+.app .rt-SelectTrigger {
+  background: var(--surface-control);
+  box-shadow: inset 0 0 0 1px var(--control-border);
+}
+.app .rt-TextFieldRoot:focus-within {
+  box-shadow: inset 0 0 0 2px var(--focus-8);
+}
+.app .rt-TextFieldInput::placeholder {
+  color: var(--gray-11);
+}
+.primary-action:not(:disabled),
+.mode-switch::before {
+  background: var(--action);
+  color: var(--action-text);
+}
+.primary-action:not(:disabled):hover {
+  background: var(--action-hover);
+}
+.launch-action:not(:disabled) {
+  background: var(--launch);
+  color: var(--launch-text);
+}
+.launch-action:not(:disabled):hover {
+  background: var(--launch-hover);
+}
+.app .rt-Button {
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.mode-switch {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 280px;
+  max-width: 100%;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface-track);
+  box-shadow: none;
+  overflow: visible;
+}
+.mode-switch::before {
+  content: "";
+  position: absolute;
+  inset: 4px auto 4px 4px;
+  width: calc((100% - 8px) / 2);
+  border-radius: 9px;
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: -1;
+}
+.mode-switch[data-mode="custom"]::before {
+  transform: translateX(100%);
+}
+.mode-switch .rt-BaseTabListTrigger {
+  height: 36px;
+  color: var(--gray-11);
+  border-radius: 9px;
+  transition: color 140ms ease;
+}
+.mode-switch .rt-BaseTabListTrigger[data-state="active"] {
+  color: var(--action-text);
+}
+.mode-switch .rt-BaseTabListTrigger::before {
+  display: none;
+}
+.mode-switch .rt-BaseTabListTriggerInner {
+  background: transparent;
+}
+.mode-switch .rt-BaseTabListTrigger:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: 2px;
+}
+.mode-switch .rt-BaseTabListTrigger:focus-visible .rt-BaseTabListTriggerInner {
+  outline: none;
+}
+.theme-toggle.rt-Button {
+  padding: 0;
+  height: 44px;
+  background: transparent;
+  color: var(--gray-11);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.theme-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  width: 68px;
+  height: 36px;
+  border-radius: 18px;
+  background: var(--surface-track);
+}
+.theme-thumb {
+  position: absolute;
+  inset: 4px auto 4px 4px;
+  width: 28px;
+  border-radius: 50%;
+  background: var(--launch);
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1), background-color 140ms ease;
+}
+.dark .theme-thumb {
+  transform: translateX(32px);
+  background: var(--action);
+}
+.theme-track svg {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.light .theme-track svg:first-of-type {
+  color: var(--launch-text);
+}
+.dark .theme-track svg:last-of-type {
+  color: var(--action-text);
 }
 .app {
   /* 表单按可读行长定宽，不随窗口拉伸：短字段单列，长字段跨两列。 */
@@ -145,6 +297,7 @@ p {
   text-align: center;
 }
 footer {
+  background: var(--surface-footer);
   display: flex;
   justify-content: space-between;
   align-items: center;

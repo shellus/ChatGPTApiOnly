@@ -164,42 +164,55 @@ test("settings fit desktop, compact window and large text in both themes", async
   page,
 }) => {
   await fixture(page);
-  for (const [width, height] of [
-    [700, 640],
-    [600, 580],
-  ]) {
-    await page.setViewportSize({ width, height });
-    for (const mode of ["官方账号", "自定义 API"]) {
-      await page.getByRole("tab", { name: mode, exact: true }).click();
-      await expect(
-        page.getByRole("button", { name: "保存配置", exact: true }),
-      ).toBeVisible();
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-      if (height === 640)
-        expect(
-          await page.evaluate(
-            () => document.documentElement.scrollHeight <= innerHeight,
-          ),
-        ).toBe(true);
-      await page.screenshot({
-        path: `.impeccable/review/${width}-${mode}.png`,
-        fullPage: true,
-      });
+  for (const appearance of ["light", "dark"] as const) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    if (appearance === "dark") {
+      await page.getByRole("button", { name: "深色", exact: true }).focus();
+      await page.keyboard.press("Space");
+      await expect(page.getByRole("button", { name: "浅色", exact: true })).toBeVisible();
     }
+    for (const [width, height] of [[700, 640], [600, 580]]) {
+      await page.setViewportSize({ width, height });
+      for (const mode of ["官方账号", "自定义 API"]) {
+        await page.getByRole("tab", { name: mode, exact: true }).click();
+        await expect(page.getByRole("tab", { name: mode, exact: true })).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("button", { name: "保存配置", exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (height === 640)
+          expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+        await page.screenshot({
+          path: `.impeccable/review/${width}-${mode}${appearance === "dark" ? "-dark" : ""}.png`,
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
+    }
+    // Contrast uses the browser's actual resolved theme, including control overrides.
+    const ratios = await page.evaluate(() => {
+      const luminance = (color: string) => {
+        const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => {
+          v /= 255;
+          return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        });
+        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+      };
+      return ["header p", ".primary-action", ".launch-action", ".mode-switch [aria-selected=true]"].map(selector => {
+        const element = document.querySelector(selector)!;
+        const style = getComputedStyle(element);
+        const background = selector === "header p" ? getComputedStyle(document.querySelector(".app")!).backgroundColor
+          : selector.includes("mode-switch") ? getComputedStyle(document.querySelector(".mode-switch")!, "::before").backgroundColor
+          : style.backgroundColor;
+        const a = luminance(style.color), b = luminance(background);
+        return { selector, ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+      });
+    });
+    for (const { selector, ratio } of ratios) expect(ratio, selector).toBeGreaterThanOrEqual(4.5);
   }
-  await page.getByRole("button", { name: "深色", exact: true }).click();
-  await page.screenshot({
-    path: ".impeccable/review/dark.png",
-    fullPage: true,
-  });
+  expect(await calls(page, "save")).toBe(0);
+  expect(await calls(page, "launch")).toBe(0);
+  await page.getByRole("tab", { name: "官方账号", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "自定义 API", exact: true })).toBeFocused();
   await page.evaluate(() => (document.documentElement.style.fontSize = "24px"));
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
