@@ -2,8 +2,8 @@
 
 ## 项目边界
 
-- 项目采用 Rust 共享核心（`crates/core`）、独立 CLI（`crates/cli`）和 Tauri GUI（`src-tauri`、`ui`）。不得保留旧 WinForms 兼容层或在前端复制业务校验。
-- Windows/macOS GUI 使用系统 WebView；Windows 便携 EXE 依赖 WebView2，安装包可处理缺失运行时。Linux CLI 不得依赖 GUI、Node.js、.NET 或外部 SQLite DLL。
+- 项目采用 Rust 共享核心（`crates/core`）、独立 CLI（`crates/cli`）和 Tauri GUI（`src-tauri`、`ui`）。业务校验只在核心实现，不得在前端复制。
+- Windows/macOS GUI 使用系统 WebView；Windows 便携 EXE 依赖 WebView2，安装包可处理缺失运行时。Linux CLI 不得依赖 GUI、Node.js 或外部 SQLite DLL。
 - 不添加启动器级单实例锁。重复启动行为应继续交给官方桌面应用处理。
 - 打开程序始终显示配置窗口，只有“启动”按钮触发客户端启动；不添加自动启动、启动倒计时、全局空格入口或 Enter 默认启动按钮。
 - 保存按钮放在各自 Tab 内，保存成功后留在设置页；底部“启动”只读取已保存配置，有未保存修改时提示并阻止启动。启动器不得因打开设置或保存配置而停止已运行的 ChatGPT，仅在启动请求成功后退出启动器，失败留在设置页。

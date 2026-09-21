@@ -1,6 +1,5 @@
 # Local builds and compiler output
 ChatGPTApiOnly.exe
-ChatGPTApiOnly.test.exe
 /*.zip
 *.pdb
 *.tmp

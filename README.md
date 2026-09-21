@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | Windows x64 | Tauri GUI、CLI | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
 | macOS Apple Silicon | Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
-| Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js、.NET 或系统 SQLite |
+| Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js 或系统 SQLite |
 
-原 WinForms 实现由 Rust/Tauri 替换。现有配置结构继续使用，无旧 GUI 兼容层。macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
+macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
 
 ## 桌面使用
 
