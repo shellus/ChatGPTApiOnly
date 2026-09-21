@@ -33,6 +33,7 @@ macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的
 ```sh
 npm ci
 npm run build
+cargo fmt --all -- --check
 cargo test -p launcher-core -p chatgpt-api-only --locked
 cargo clippy -p launcher-core -p chatgpt-api-only --all-targets -- -D warnings
 cargo build -p chatgpt-api-only --release --locked

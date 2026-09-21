@@ -97,7 +97,10 @@ fn on_visible_monitor(window: &tauri::Window, state: &WindowState) -> bool {
             let factor = monitor.scale_factor();
             let origin = monitor.position().to_logical::<f64>(factor);
             let size = monitor.size().to_logical::<f64>(factor);
-            x >= origin.x && x < origin.x + size.width && y >= origin.y && y < origin.y + size.height
+            x >= origin.x
+                && x < origin.x + size.width
+                && y >= origin.y
+                && y < origin.y + size.height
         })
     })
 }
