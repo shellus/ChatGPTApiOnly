@@ -9,7 +9,7 @@
 | 平台 | 入口 | 分发依赖 |
 | --- | --- | --- |
 | Windows x64 | Tauri GUI、CLI | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
-| macOS | Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
+| macOS Apple Silicon | Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
 | Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js、.NET 或系统 SQLite |
 
 原 WinForms 实现由 Rust/Tauri 替换。现有配置结构继续使用，无旧 GUI 兼容层。macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
@@ -52,7 +52,7 @@ npx playwright install chromium
 npm test
 ```
 
-Windows 可运行 `node scripts/desktop-smoke.mjs`，以临时 example 配置验证正式程序的实际 IPC、保存、冲突和关闭行为。Rust 测试显式传入临时 Store；GUI 测试使用隔离 fixture，不修改真实用户认证。
+Windows 可运行 `node scripts/desktop-smoke.mjs`，以临时 example 配置验证正式程序的实际 IPC、保存、冲突和关闭行为；可追加 EXE 路径以核对 CI 下载的发布文件。Rust 测试显式传入临时 Store；GUI 测试使用隔离 fixture，不修改真实用户认证。
 
 CI 在 Windows、Linux、macOS 运行核心和 CLI 测试，构建 Windows/macOS GUI，并上传平台产物。行为验证与运行边界见[架构文档](docs/dev-spec/application-behavior.md)。
 

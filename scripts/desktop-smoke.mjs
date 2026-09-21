@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 // The production binary runs against an isolated fixture; no test command is compiled into it.
 const fixture = await mkdtemp(join(tmpdir(), 'chatgpt-api-only-example-'));
 const port = 19227;
-const executable = resolve('target/release/ChatGPTApiOnly.exe');
+const executable = resolve(process.argv[2] ?? 'target/release/ChatGPTApiOnly.exe');
 const child = spawn(executable, [], { windowsHide: true, env: {
   ...process.env, CHATGPT_API_ONLY_CONFIG_DIR: fixture,
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
@@ -45,7 +45,17 @@ try {
   await page.getByRole('button', {name:'继续编辑',exact:true}).click();
   await page.getByRole('alertdialog').waitFor({state:'hidden'});
   await page.keyboard.press('Escape');
-  await page.getByRole('button', {name:'放弃修改并关闭',exact:true}).click();
+  // A production app may exit before WebView acknowledges the click. Verify the
+  // actual process exit instead of treating that expected disconnect as failure.
+  let exitTimer;
+  const exited = new Promise((resolve, reject) => {
+    child.once('exit', (code, signal) => { clearTimeout(exitTimer); resolve({code, signal}); });
+    exitTimer = setTimeout(() => reject(new Error('Desktop did not exit after confirmation')), 10000);
+  });
+  await page.getByRole('button', {name:'放弃修改并关闭',exact:true}).click().catch(error => {
+    if (!String(error).includes('Target page, context or browser has been closed')) throw error;
+  });
+  assert.deepEqual(await exited, {code: 0, signal: null});
   console.log('PASS: production Tauri window, actual IPC, isolated save, dirty/external conflict, close cancellation and Escape');
   console.log(`Fixture: ${fixture}`);
 } finally {
