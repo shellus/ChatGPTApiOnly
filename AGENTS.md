@@ -21,6 +21,7 @@
 - 认证类型由 `auth.json` 决定，不写入 `forced_login_method`；存在显式限制时提示冲突。`cli_auth_credentials_store` 默认不写，已有 `file` 保留，其他显式存储方式提示冲突。
 - 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`；活动配置保留 `[model_providers.custom]` 的名称、`wire_api = "responses"` 与 `requires_openai_auth = true`，供历史对话解析，不携带自定义地址、Key、认证覆盖或请求头。自定义模式恢复完整片段后更新表单字段。快照保留未知字段、其他提供者及嵌套表，重复保存不得用官方模式的精简定义覆盖快照。
 - 数据格式变更只做一次性迁移，不在程序中保留旧版本兼容分支或升级测试。
+- 桌面窗口几何写入 `launcher-profiles/window.json`，不进入四文件基线，也不因记住尺寸触发外部变化校验；只在退出时落盘，失败仅记日志，不阻断退出或启动。记住的位置不在任何显示器上时放弃该位置。
 - 不静默删除 profile 或路由覆盖配置；发现与目标模式冲突时，在落盘前提示并阻止切换。
 - 历史修复只能由 GUI“修复对话”按钮或 CLI `repair` 命令显式触发。进度必须来自真实工作量，GUI 以临时 `n/total` 进度区展示。
 - 修改 rollout 或 SQLite 前必须创建备份；SQLite 更新使用事务，失败时恢复已改写的 rollout 并阻止误报成功。

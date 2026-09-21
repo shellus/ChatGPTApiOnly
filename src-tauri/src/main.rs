@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use launcher_core::{Draft, Session, Store, View};
+use launcher_core::{Draft, Session, Store, View, WindowState};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 struct State {
     session: Mutex<Option<Session>>,
     store: Store,
+    window: Mutex<Option<WindowState>>,
 }
 fn failure(state: &State, stage: &str, error: impl std::fmt::Display) -> String {
     let text = format!("{error}");
@@ -87,12 +88,55 @@ fn open_download(updates: bool) -> Result<(), String> {
     launcher_core::launch::open_download(updates).map_err(|e| format!("{e:#}"))
 }
 
+/// 显示器可能在两次打开之间被拔掉或重新排列；窗口中心不落在任何显示器上时
+/// 放弃记住的位置，交给系统摆放，避免窗口开在看不见的地方。
+fn on_visible_monitor(window: &tauri::Window, state: &WindowState) -> bool {
+    let (x, y) = (state.x + state.width / 2.0, state.y + state.height / 2.0);
+    window.available_monitors().is_ok_and(|monitors| {
+        monitors.iter().any(|monitor| {
+            let factor = monitor.scale_factor();
+            let origin = monitor.position().to_logical::<f64>(factor);
+            let size = monitor.size().to_logical::<f64>(factor);
+            x >= origin.x && x < origin.x + size.width && y >= origin.y && y < origin.y + size.height
+        })
+    })
+}
+fn geometry(window: &tauri::Window, maximized: bool) -> Option<WindowState> {
+    let factor = window.scale_factor().ok()?;
+    let size = window.inner_size().ok()?.to_logical::<f64>(factor);
+    let position = window.outer_position().ok()?.to_logical::<f64>(factor);
+    (size.width > 0.0 && size.height > 0.0).then_some(WindowState {
+        width: size.width,
+        height: size.height,
+        x: position.x,
+        y: position.y,
+        maximized,
+    })
+}
+/// 最大化或最小化时的尺寸不是用户挑的尺寸，只更新最大化标记，
+/// 保留上一次手动调整的几何作为还原尺寸。
+fn remember(window: &tauri::Window) {
+    let state = window.state::<State>();
+    let maximized = window.is_maximized().unwrap_or(false);
+    let mut guard = state.window.lock().unwrap();
+    if maximized || window.is_minimized().unwrap_or(false) {
+        if let Some(previous) = guard.as_mut() {
+            previous.maximized = maximized;
+        }
+        return;
+    }
+    if let Some(current) = geometry(window, maximized) {
+        *guard = Some(current);
+    }
+}
+
 fn main() {
     let store = Store::discover().expect("无法确定配置目录");
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(State {
             session: Mutex::new(None),
             store,
+            window: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             load,
@@ -102,12 +146,44 @@ fn main() {
             close,
             open_download
         ])
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .setup(|app| {
+            let window = app
+                .get_webview_window("main")
+                .expect("缺少主窗口")
+                .as_ref()
+                .window();
+            let state = app.state::<State>();
+            let saved = state.store.window_state();
+            if let Some(saved) = saved {
+                let _ = window.set_size(tauri::LogicalSize::new(saved.width, saved.height));
+                if on_visible_monitor(&window, &saved) {
+                    let _ = window.set_position(tauri::LogicalPosition::new(saved.x, saved.y));
+                }
+                if saved.maximized {
+                    let _ = window.maximize();
+                }
+            }
+            // 记住的几何本身就是还原目标；只有首次运行才需要读取窗口当前位置。
+            *state.window.lock().unwrap() = saved.or_else(|| geometry(&window, false));
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.emit("request-close", ());
             }
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => remember(window),
+            _ => {}
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("桌面窗口启动失败");
+    app.run(|app, event| {
+        if let tauri::RunEvent::Exit = event {
+            let state = app.state::<State>();
+            let current = *state.window.lock().unwrap();
+            if let Some(current) = current {
+                state.store.set_window_state(&current);
+            }
+        }
+    });
 }

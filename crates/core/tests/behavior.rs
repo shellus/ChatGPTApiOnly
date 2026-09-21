@@ -1,6 +1,6 @@
 use launcher_core::{
     config::{normalize_proxy, proxy_env},
-    history, CustomFields, Mode, Session, Store,
+    history, CustomFields, Mode, Session, Store, WindowState,
 };
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -415,4 +415,22 @@ fn failed_rollout_after_first_write_restores_first_and_sql() {
         .unwrap(),
         2
     );
+}
+#[test]
+fn window_geometry_persists_without_disturbing_the_saved_file_baseline() {
+    let (_dir, store) = fixture();
+    let mut session = Session::open(store.clone()).unwrap();
+    custom(&mut session);
+    let revision = session.view().revision;
+    let state = WindowState {
+        width: 900.0,
+        height: 660.0,
+        x: 120.0,
+        y: 60.0,
+        maximized: false,
+    };
+    store.set_window_state(&state);
+    assert_eq!(store.window_state(), Some(state));
+    // 窗口几何不属于四文件基线，记住尺寸不得让已打开的草稿失效。
+    session.save(&revision, &session.original.clone()).unwrap();
 }

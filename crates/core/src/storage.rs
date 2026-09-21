@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -13,7 +14,19 @@ pub const FILES: [&str; 4] = [
     "launcher-profiles/modes.json",
     ".env",
 ];
+const WINDOW_STATE: &str = "launcher-profiles/window.json";
 pub type Snapshot = Vec<Option<Vec<u8>>>;
+
+/// 桌面窗口的逻辑尺寸与位置。只描述本机窗口，不属于 FILES 基线，
+/// 因此读写它不会触发保存与启动的外部变化校验。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowState {
+    pub width: f64,
+    pub height: f64,
+    pub x: f64,
+    pub y: f64,
+    pub maximized: bool,
+}
 
 #[derive(Clone)]
 pub struct Store {
@@ -102,6 +115,19 @@ impl Store {
             );
         }
         Ok(())
+    }
+    pub fn window_state(&self) -> Option<WindowState> {
+        let bytes = read(&self.root.join(WINDOW_STATE)).ok().flatten()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+    /// 记不住窗口尺寸只影响下次打开时的观感，失败只记日志，不打断退出或启动。
+    pub fn set_window_state(&self, state: &WindowState) {
+        let result = serde_json::to_vec_pretty(state)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| write(&self.root.join(WINDOW_STATE), Some(&bytes)));
+        if let Err(e) = result {
+            self.log("保存窗口尺寸", &format!("{e:#}"));
+        }
     }
     pub fn log(&self, stage: &str, error: &str) {
         let dir = self.root.join("launcher-profiles/logs");
