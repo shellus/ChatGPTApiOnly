@@ -89,6 +89,7 @@ input {
   background: var(--surface-track);
   box-shadow: none;
   overflow: visible;
+  margin-inline: auto;
 }
 .mode-switch::before {
   content: "";
@@ -171,8 +172,8 @@ input {
   color: var(--action-text);
 }
 .app {
-  /* 表单按可读行长定宽，不随窗口拉伸：短字段单列，长字段跨两列。 */
-  --form-width: 520px;
+  /* 表单随可用空间伸缩并限制最大行长：短字段单列，长字段跨两列。 */
+  --form-width: 720px;
   --column-gap: 16px;
   display: flex;
   flex-direction: column;
@@ -217,7 +218,8 @@ p {
   align-items: end;
   gap: 12px;
   margin-bottom: 14px;
-  max-width: var(--form-width);
+  width: min(100%, var(--form-width));
+  margin-inline: auto;
 }
 .profile-select {
   display: flex;
@@ -236,7 +238,8 @@ p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px var(--column-gap);
   align-items: start;
-  max-width: var(--form-width);
+  width: min(100%, var(--form-width));
+  margin-inline: auto;
 }
 .field {
   display: flex;
@@ -285,7 +288,8 @@ p {
   gap: 12px;
   align-items: center;
   margin-top: 16px;
-  max-width: var(--form-width);
+  width: min(100%, var(--form-width));
+  margin-inline: auto;
 }
 .save-row > span {
   color: var(--gray-11);

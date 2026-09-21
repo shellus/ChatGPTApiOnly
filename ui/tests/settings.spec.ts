@@ -171,13 +171,16 @@ test("settings fit desktop, compact window and large text in both themes", async
       await page.keyboard.press("Space");
       await expect(page.getByRole("button", { name: "浅色", exact: true })).toBeVisible();
     }
-    for (const [width, height] of [[700, 640], [600, 580]]) {
+    for (const [width, height] of [[700, 640], [600, 580], [1000, 800]]) {
       await page.setViewportSize({ width, height });
       for (const mode of ["官方账号", "自定义 API"]) {
         await page.getByRole("tab", { name: mode, exact: true }).click();
         await expect(page.getByRole("tab", { name: mode, exact: true })).toHaveAttribute("aria-selected", "true");
         await expect(page.getByRole("button", { name: "保存配置", exact: true })).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const formBounds = await page.locator(".form").boundingBox();
+        expect(Math.round(formBounds!.width)).toBe(Math.min(width <= 650 ? width - 36 : width - 56, 720));
+        expect(Math.abs(formBounds!.x + formBounds!.width / 2 - width / 2)).toBeLessThan(1);
         if (height === 640)
           expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
         await page.screenshot({

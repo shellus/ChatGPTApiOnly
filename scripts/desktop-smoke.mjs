@@ -15,14 +15,18 @@ let child, browser;
 async function open() {
   child = spawn(executable, [], { windowsHide: true, env: {
     ...process.env, CHATGPT_API_ONLY_CONFIG_DIR: fixture,
+    WEBVIEW2_USER_DATA_FOLDER: join(fixture, 'webview'),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
   } });
   for (let attempt = 0; attempt < 120; attempt++) {
     if (child.exitCode !== null) throw new Error(`Desktop exited with ${child.exitCode}`);
-    try { const response = await fetch(`http://127.0.0.1:${port}/json/version`); if (response.ok) break; } catch {}
+    try {
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 });
+      break;
+    } catch {}
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  if (!browser) throw new Error('Desktop debugging connection did not become ready');
   const context = browser.contexts()[0];
   const page = context.pages()[0] ?? await context.waitForEvent('page');
   await page.getByRole('tab', { name: '官方账号', exact: true }).waitFor();
