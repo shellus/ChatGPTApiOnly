@@ -7,8 +7,8 @@ ChatGPTApiOnly.test.exe
 *.tmp-*
 
 # Local Codex configuration and backups
-config.toml
-auth.json
+/config.toml
+/auth.json
 .env
 *.bak
 backups_state/
@@ -16,3 +16,12 @@ launcher-profiles/
 
 # Machine-specific documentation
 README.local.md
+
+# Rust / frontend builds
+/target/
+/dist/
+/node_modules/
+/src-tauri/gen/
+/test-results/
+/playwright-report/
+/.impeccable/

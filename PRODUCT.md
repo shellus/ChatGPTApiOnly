@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Users managing official accounts and custom API profiles for the Microsoft Store ChatGPT/Codex desktop application. Opening the launcher always shows connection settings; users save configuration and explicitly launch the client as separate actions.
+Users managing official accounts and custom API profiles for Codex on Windows, macOS, and Linux. Windows/macOS provide a desktop settings window; a separate CLI shares the Rust core. Opening the GUI always shows connection settings; saving and launching are separate actions.
 
 ## Product Purpose
 

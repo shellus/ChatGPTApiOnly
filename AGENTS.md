@@ -2,8 +2,8 @@
 
 ## 项目边界
 
-- 项目是单文件 .NET Framework WinForms 启动器，主源码为 `ChatGPTApiOnly.cs`。
-- 保持启动器无需额外运行库、安装器或 PowerShell 脚本即可运行。
+- 项目采用 Rust 共享核心（`crates/core`）、独立 CLI（`crates/cli`）和 Tauri GUI（`src-tauri`、`ui`）。不得保留旧 WinForms 兼容层或在前端复制业务校验。
+- Windows/macOS GUI 使用系统 WebView；Windows 便携 EXE 依赖 WebView2，安装包可处理缺失运行时。Linux CLI 不得依赖 GUI、Node.js、.NET 或外部 SQLite DLL。
 - 不添加启动器级单实例锁。重复启动行为应继续交给官方桌面应用处理。
 - 打开程序始终显示配置窗口，只有“启动”按钮触发客户端启动；不添加自动启动、启动倒计时、全局空格入口或 Enter 默认启动按钮。
 - 保存按钮放在各自 Tab 内，保存成功后留在设置页；底部“启动”只读取已保存配置，有未保存修改时提示并阻止启动。启动器不得因打开设置或保存配置而停止已运行的 ChatGPT，仅在启动请求成功后退出启动器，失败留在设置页。
@@ -22,22 +22,22 @@
 - 官方模式将完整 `model_providers` TOML 片段保存到 `launcher-profiles/modes.json` 的 `model_providers_toml`；活动配置保留 `[model_providers.custom]` 的名称、`wire_api = "responses"` 与 `requires_openai_auth = true`，供历史对话解析，不携带自定义地址、Key、认证覆盖或请求头。自定义模式恢复完整片段后更新表单字段。快照保留未知字段、其他提供者及嵌套表，重复保存不得用官方模式的精简定义覆盖快照。
 - 数据格式变更只做一次性迁移，不在程序中保留旧版本兼容分支或升级测试。
 - 不静默删除 profile 或路由覆盖配置；发现与目标模式冲突时，在落盘前提示并阻止切换。
-- 历史对话修复只能由“修复对话”按钮显式触发。进度必须来自真实工作量，并以临时 `n/total` 进度区展示。
+- 历史修复只能由 GUI“修复对话”按钮或 CLI `repair` 命令显式触发。进度必须来自真实工作量，GUI 以临时 `n/total` 进度区展示。
 - 修改 rollout 或 SQLite 前必须创建备份；SQLite 更新使用事务，失败时恢复已改写的 rollout 并阻止误报成功。
 
 ## 安全与测试
 
 - 不得把真实 API Key、API 地址、账号、本机路径或 Codex 配置提交到仓库。
 - README 截图或动画只能捕获应用窗口，并使用隔离 fixture 与明显的 `example` 占位值；不得包含桌面背景、终端、用户名或真实配置。
-- Provider 同步测试必须设置 `CHATGPT_API_ONLY_CONFIG_DIR` 并指向隔离 fixture，禁止对真实 Codex 用户目录运行测试入口。
-- 测试入口只能在定义 `PROVIDER_SYNC_TEST` 时编译，正式 EXE 不得包含该入口。
+- Rust 测试显式传入临时 Store；正式 GUI 自动化必须设置 `CHATGPT_API_ONLY_CONFIG_DIR` 并指向隔离 fixture，禁止测试读取真实 Codex 用户目录。
+- 测试入口放在 Rust tests 或 `#[cfg(test)]` 中，不得进入正式 EXE，不得添加运行时测试后门。
 - 修改同步逻辑时至少验证：成功更新、无变更幂等、数据库失败回滚、备份存在，以及保存配置不会触发同步。
 
 ## 构建与发布产物
 
-- 构建命令以 `README.md` 为准，正式产物为 `ChatGPTApiOnly.exe`。
+- 构建命令以 `README.md` 为准，Windows GUI 产物为 `ChatGPTApiOnly.exe`，CLI 为 `chatgpt-api-only`（Windows 带 `.exe`），macOS GUI 为 `.app`。
 - 源码行为改变后必须重新构建正式 EXE，并确认测试入口未进入正式二进制。
 - 正式 EXE 与发布 ZIP 不进入 Git 跟踪，只能作为 GitHub Release 资产分发。
-- 发布 ZIP 只包含正式 `ChatGPTApiOnly.exe`；发布前确认 ZIP 内 EXE 与本地正式 EXE 的 SHA-256 一致。
+- Windows 便携 ZIP 只包含正式 `ChatGPTApiOnly.exe`；发布前确认 ZIP 内 EXE 与对应正式 EXE 的 SHA-256 一致。CLI 与其他平台产物独立打包。
 - Release tag 使用语义化版本；同一版本的 tag、标题、ZIP 文件名与发布说明必须一致。
 - 提交前检查 `git status`、staged diff、敏感信息扫描结果和构建验证结果。
