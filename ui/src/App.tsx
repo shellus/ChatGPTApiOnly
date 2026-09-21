@@ -305,7 +305,7 @@ export default function App() {
                   </div>
                 </div>
                 {profile ? (
-                  <>
+                  <div className="form">
                     <Field
                       label="配置名称"
                       value={profile.name ?? ""}
@@ -320,7 +320,8 @@ export default function App() {
                     />
                     {mode === "official" ? (
                       <>
-                        <div className="account-status">
+                        <div className="field account-status">
+                          <span>账号状态</span>
                           <strong>
                             {profile.email ||
                               profile.account_name ||
@@ -333,9 +334,30 @@ export default function App() {
                           </p>
                         </div>
                         <Field
+                          label="官方模型（可留空）"
+                          value={draft.library.official_model ?? ""}
+                          disabled={!!busy}
+                          onChange={(v) =>
+                            edit((next) => {
+                              next.library.official_model = v;
+                            })
+                          }
+                        />
+                        <Field
+                          label="思考层级（可留空）"
+                          value={draft.library.official_effort ?? ""}
+                          disabled={!!busy}
+                          onChange={(v) =>
+                            edit((next) => {
+                              next.library.official_effort = v;
+                            })
+                          }
+                        />
+                        <Field
                           label="HTTP 代理"
                           value={draft.library.official_proxy_url ?? ""}
                           placeholder="http://127.0.0.1:7890"
+                          hint="所有官方账号共用。留空不设置独立代理；不修改系统代理。"
                           disabled={!!busy}
                           onChange={(v) =>
                             edit((next) => {
@@ -343,31 +365,6 @@ export default function App() {
                             })
                           }
                         />
-                        <p className="help">
-                          所有官方账号共用。留空不设置独立代理；不修改系统代理。
-                        </p>
-                        <div className="field-grid">
-                          <Field
-                            label="官方模型（可留空）"
-                            value={draft.library.official_model ?? ""}
-                            disabled={!!busy}
-                            onChange={(v) =>
-                              edit((next) => {
-                                next.library.official_model = v;
-                              })
-                            }
-                          />
-                          <Field
-                            label="思考层级（可留空）"
-                            value={draft.library.official_effort ?? ""}
-                            disabled={!!busy}
-                            onChange={(v) =>
-                              edit((next) => {
-                                next.library.official_effort = v;
-                              })
-                            }
-                          />
-                        </div>
                       </>
                     ) : (
                       fields && (
@@ -379,6 +376,7 @@ export default function App() {
                             onChange={(v) => field("provider_name", v)}
                           />
                           <Field
+                            wide
                             label="API 地址"
                             value={fields.base_url}
                             placeholder="https://api.example.com/v1"
@@ -386,29 +384,28 @@ export default function App() {
                             onChange={(v) => field("base_url", v)}
                           />
                           <Field
+                            wide
                             label="API Key"
                             value={fields.api_key}
                             disabled={!!busy}
                             onChange={(v) => field("api_key", v)}
                           />
-                          <div className="field-grid">
-                            <Field
-                              label="模型"
-                              value={fields.model}
-                              disabled={!!busy}
-                              onChange={(v) => field("model", v)}
-                            />
-                            <Field
-                              label="思考层级"
-                              value={fields.effort}
-                              disabled={!!busy}
-                              onChange={(v) => field("effort", v)}
-                            />
-                          </div>
+                          <Field
+                            label="模型"
+                            value={fields.model}
+                            disabled={!!busy}
+                            onChange={(v) => field("model", v)}
+                          />
+                          <Field
+                            label="思考层级"
+                            value={fields.effort}
+                            disabled={!!busy}
+                            onChange={(v) => field("effort", v)}
+                          />
                         </>
                       )
                     )}
-                  </>
+                  </div>
                 ) : (
                   <div className="empty">
                     <h2>
@@ -569,15 +566,19 @@ function Field({
   onChange,
   disabled,
   placeholder,
+  hint,
+  wide,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   disabled: boolean;
   placeholder?: string;
+  hint?: string;
+  wide?: boolean;
 }) {
   return (
-    <label className="field">
+    <label className={`field${wide ? " wide" : ""}${hint ? " with-hint" : ""}`}>
       <span>{label}</span>
       <TextField.Root
         value={value}
@@ -587,6 +588,7 @@ function Field({
         autoComplete="off"
         spellCheck={false}
       />
+      {hint && <span className="hint">{hint}</span>}
     </label>
   );
 }

@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "ChatGPT API Only",
-        "width": 820,
-        "height": 720,
+        "width": 700,
+        "height": 640,
         "minWidth": 600,
         "minHeight": 580
       }

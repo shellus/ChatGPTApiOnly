@@ -19,6 +19,9 @@ input {
   --cursor-button: pointer;
 }
 .app {
+  /* 表单按可读行长定宽，不随窗口拉伸：短字段单列，长字段跨两列。 */
+  --form-width: 520px;
+  --column-gap: 16px;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -32,7 +35,7 @@ header {
   justify-content: space-between;
   align-items: center;
   gap: 20px;
-  padding: 24px 28px 18px;
+  padding: 18px 28px 12px;
 }
 h1 {
   margin: 0;
@@ -52,57 +55,85 @@ p {
 }
 .content {
   flex: 1;
-  padding: 0 28px 20px;
+  padding: 0 28px 16px;
 }
 .settings {
-  padding-top: 18px;
+  padding-top: 14px;
 }
 .profile-row {
   display: flex;
   align-items: end;
   gap: 12px;
   margin-bottom: 14px;
+  max-width: var(--form-width);
 }
 .profile-select {
   display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   font-size: 13px;
 }
 .profile-actions {
   display: flex;
   gap: 8px;
 }
+.form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px var(--column-gap);
+  align-items: start;
+  max-width: var(--form-width);
+}
 .field {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin-bottom: 12px;
   font-size: 13px;
   min-width: 0;
 }
-.field-grid {
+.field.wide {
+  grid-column: 1 / -1;
+}
+/* 带说明的字段横跨两列，控件仍保持单列宽度，说明文字占用右侧空列。 */
+.field.with-hint {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: minmax(0, calc(50% - var(--column-gap) / 2)) minmax(
+      0,
+      1fr
+    );
+  column-gap: var(--column-gap);
+  row-gap: 5px;
+}
+.field.with-hint > span:first-child {
+  grid-area: 1 / 1;
+}
+.field.with-hint > :nth-child(2) {
+  grid-area: 2 / 1;
+}
+.field.with-hint > .hint {
+  grid-area: 2 / 2;
+  align-self: center;
+  color: var(--gray-11);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .account-status {
-  margin: 14px 0 18px;
-  padding: 12px 0;
-  border-block: 1px solid var(--gray-5);
-  font-size: 14px;
+  grid-column: 2;
+  grid-row: 1;
   overflow-wrap: anywhere;
 }
-.help {
-  margin: -5px 0 16px;
+.account-status > strong {
+  font-size: 14px;
 }
 .save-row {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-top: 12px;
+  margin-top: 16px;
+  max-width: var(--form-width);
 }
 .save-row > span {
   color: var(--gray-11);
@@ -202,9 +233,18 @@ input {
   .profile-select {
     flex-basis: 100%;
   }
-  .field-grid {
-    grid-template-columns: 1fr;
-    gap: 0;
+  .form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .field.with-hint {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .field.with-hint > .hint {
+    grid-area: 3 / 1;
+  }
+  .account-status {
+    grid-column: 1;
+    grid-row: auto;
   }
 }
 @media (prefers-reduced-motion: reduce) {

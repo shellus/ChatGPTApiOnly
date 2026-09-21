@@ -165,7 +165,7 @@ test("settings fit desktop, compact window and large text in both themes", async
 }) => {
   await fixture(page);
   for (const [width, height] of [
-    [820, 720],
+    [700, 640],
     [600, 580],
   ]) {
     await page.setViewportSize({ width, height });
@@ -179,6 +179,12 @@ test("settings fit desktop, compact window and large text in both themes", async
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
+      if (height === 640)
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollHeight <= innerHeight,
+          ),
+        ).toBe(true);
       await page.screenshot({
         path: `.impeccable/review/${width}-${mode}.png`,
         fullPage: true,

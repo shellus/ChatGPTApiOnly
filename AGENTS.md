@@ -28,7 +28,7 @@
 ## 安全与测试
 
 - 不得把真实 API Key、API 地址、账号、本机路径或 Codex 配置提交到仓库。
-- README 截图或动画只能捕获应用窗口，并使用隔离 fixture 与明显的 `example` 占位值；不得包含桌面背景、终端、用户名或真实配置。
+- README 截图只能捕获应用窗口，并使用隔离 fixture 与明显的 `example` 占位值；不得包含桌面背景、终端、用户名或真实配置。`docs/images/*.png` 取自 `npm test` 输出的 `.impeccable/review/<默认窗口宽>-<模式>.png`，界面布局变更后必须同步替换，不保留与当前界面不符的图片。
 - Rust 测试显式传入临时 Store；正式 GUI 自动化必须设置 `CHATGPT_API_ONLY_CONFIG_DIR` 并指向隔离 fixture，禁止测试读取真实 Codex 用户目录。
 - 测试入口放在 Rust tests 或 `#[cfg(test)]` 中，不得进入正式 EXE，不得添加运行时测试后门。
 - 修改同步逻辑时至少验证：成功更新、无变更幂等、数据库失败回滚、备份存在，以及保存配置不会触发同步。
