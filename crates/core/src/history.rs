@@ -75,11 +75,7 @@ pub fn repair(store: &Store, progress: impl Fn(Progress)) -> Result<Report> {
     let mut rows = 0;
     for i in 0..databases.len() {
         for table in ["threads", "local_thread_catalog"] {
-            let columns: Vec<String> = tx
-                .prepare(&format!("PRAGMA db{i}.table_info({table})"))?
-                .query_map([], |r| r.get(1))?
-                .collect::<rusqlite::Result<_>>()?;
-            if columns.iter().any(|c| c == "model_provider") {
+            if has_provider_column(&tx, &format!("db{i}"), table)? {
                 let name = format!("db{i}.{table}");
                 rows += tx.query_row(
                     &format!("SELECT COUNT(*) FROM {name} WHERE model_provider IS NOT 'custom'"),
@@ -254,7 +250,13 @@ fn databases(root: &Path) -> Result<Vec<PathBuf>> {
             if (directory == root && name.starts_with("state_") && ext == "sqlite")
                 || (directory != root && ["db", "sqlite", "sqlite3"].contains(&ext))
             {
-                paths.push(p);
+                let connection = Connection::open_with_flags(&p, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                    .with_context(|| format!("读取数据库 {}", p.display()))?;
+                if has_provider_column(&connection, "main", "threads")?
+                    || has_provider_column(&connection, "main", "local_thread_catalog")?
+                {
+                    paths.push(p);
+                }
             }
         }
     }
@@ -262,9 +264,13 @@ fn databases(root: &Path) -> Result<Vec<PathBuf>> {
     if paths.len() > 10 {
         bail!("数据库超过 SQLite 单事务附加上限，未修改历史")
     }
-    for p in &paths {
-        Connection::open_with_flags(p, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .with_context(|| format!("读取数据库 {}", p.display()))?;
-    }
     Ok(paths)
+}
+
+fn has_provider_column(connection: &Connection, schema: &str, table: &str) -> Result<bool> {
+    let columns: Vec<String> = connection
+        .prepare(&format!("PRAGMA {schema}.table_info({table})"))?
+        .query_map([], |r| r.get(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(columns.iter().any(|column| column == "model_provider"))
 }

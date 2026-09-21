@@ -323,6 +323,25 @@ fn second_database_failure_rolls_back_all_databases_and_rollouts() {
     }
     assert!(store.root.join("backups_state/provider-sync").exists());
 }
+
+#[test]
+fn unrelated_databases_are_not_attached_or_backed_up() {
+    let (_dir, store) = fixture();
+    let _history = database(&store, "state_5.sqlite", false);
+    fs::create_dir_all(store.root.join("sqlite")).unwrap();
+    let mut unrelated = Vec::new();
+    for i in 0..12 {
+        let db = Connection::open(store.root.join(format!("sqlite/example-{i}.db"))).unwrap();
+        db.execute_batch("CREATE TABLE settings (value TEXT); INSERT INTO settings VALUES ('example'); BEGIN IMMEDIATE;").unwrap();
+        unrelated.push(db);
+    }
+    let result = history::repair(&store, |_| {}).unwrap();
+    assert_eq!(result.changed, 3);
+    assert!(!result.backup.unwrap().join("sqlite").exists());
+    for db in unrelated {
+        db.execute_batch("ROLLBACK;").unwrap();
+    }
+}
 #[test]
 fn changing_rollout_aborts_sql_transaction() {
     let (_dir, store) = fixture();
