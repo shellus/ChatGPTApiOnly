@@ -73,3 +73,25 @@ fn cli_manages_profiles_without_launch_and_requires_repair_confirmation() {
     assert!(!dir.path().join("backups_state").exists());
     assert!(cli(dir.path(), &["repair", "--yes"]).status.success());
 }
+
+#[test]
+fn imported_api_id_from_list_can_be_used_by_the_next_command() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("config.toml"), "model_provider='custom'\nmodel='example-model'\nmodel_reasoning_effort='medium'\n[model_providers.custom]\nname='example'\nbase_url='https://api.example.com/v1'\nwire_api='responses'\nrequires_openai_auth=true\n").unwrap();
+    fs::write(
+        dir.path().join("auth.json"),
+        r#"{"auth_mode":"apikey","OPENAI_API_KEY":"example-key"}"#,
+    )
+    .unwrap();
+    let list = cli(dir.path(), &["list"]);
+    assert!(list.status.success());
+    let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let id = list["custom_providers"][0]["id"].as_str().unwrap();
+    assert!(!dir.path().join("launcher-profiles/modes.json").exists());
+    let switched = cli(dir.path(), &["use", "custom", id]);
+    assert!(
+        switched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&switched.stderr)
+    );
+}

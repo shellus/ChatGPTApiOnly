@@ -3,6 +3,7 @@ use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use toml_edit::{value, DocumentMut, Item, Table};
 
@@ -105,6 +106,14 @@ fn auth(text: &str) -> Result<Value> {
 }
 fn nonempty(v: &Value) -> bool {
     v.as_str().is_some_and(|s| !s.trim().is_empty())
+}
+fn imported_id(kind: &str, identity: &[&str]) -> String {
+    let mut digest = Sha256::new();
+    for part in identity {
+        digest.update((part.len() as u64).to_le_bytes());
+        digest.update(part.as_bytes());
+    }
+    format!("{kind}-{:x}", digest.finalize())
 }
 pub fn valid_tokens(v: &Value) -> bool {
     v["auth_mode"] == "chatgpt"
@@ -322,7 +331,6 @@ impl Session {
         capture_official(&mut library, &doc, &active_auth)?;
         if active_mode == Mode::Custom {
             let mut p = Profile {
-                id: uuid::Uuid::new_v4().simple().to_string(),
                 name: Some("导入的 API".into()),
                 model_providers_toml: Some(provider_snapshot(&doc)),
                 custom_key: active_auth["OPENAI_API_KEY"].as_str().map(str::to_owned),
@@ -331,6 +339,7 @@ impl Session {
                 ..Default::default()
             };
             let fields = CustomFields::from_profile(&p)?;
+            p.id = imported_id("custom", &[&fields.base_url, &fields.api_key]);
             let existing = library.custom_providers.iter().position(|old| {
                 CustomFields::from_profile(old)
                     .is_ok_and(|f| f.base_url == fields.base_url && f.api_key == fields.api_key)
@@ -574,7 +583,7 @@ fn capture_official(library: &mut Library, doc: &DocumentMut, credentials: &Valu
         });
     let i = index.unwrap_or_else(|| {
         library.official_accounts.push(Profile {
-            id: uuid::Uuid::new_v4().simple().to_string(),
+            id: imported_id("official", &[account_id]),
             name: Some(claims["email"].as_str().unwrap_or("官方账号").into()),
             ..Default::default()
         });

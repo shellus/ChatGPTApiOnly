@@ -193,6 +193,24 @@ fn partial_tokens_block_without_clearing_library() {
     assert!(Session::open(store.clone()).is_err());
     assert_eq!(before, store.snapshot().unwrap());
 }
+
+#[test]
+fn imported_official_identity_is_stable_without_writing() {
+    let (_dir, store) = fixture();
+    fs::write(
+        store.root.join("auth.json"),
+        serde_json::to_vec(&credentials()).unwrap(),
+    )
+    .unwrap();
+    let before = store.snapshot().unwrap();
+    let first = Session::open(store.clone()).unwrap();
+    let second = Session::open(store.clone()).unwrap();
+    assert_eq!(
+        first.original.library.selected_official,
+        second.original.library.selected_official
+    );
+    assert_eq!(before, store.snapshot().unwrap());
+}
 #[test]
 fn external_api_import_preserves_existing_profile_identity() {
     let (_dir, store) = fixture();
