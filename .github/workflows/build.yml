@@ -48,7 +48,13 @@ jobs:
       - if: runner.os == 'Windows'
         run: npm run tauri -- build --bundles nsis
       - if: runner.os == 'macOS'
-        run: npm run tauri -- build --bundles app
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          npm run tauri -- build --bundles app --target universal-apple-darwin
+          cargo build -p chatgpt-api-only --release --locked --target aarch64-apple-darwin
+          cargo build -p chatgpt-api-only --release --locked --target x86_64-apple-darwin
+          lipo -create target/aarch64-apple-darwin/release/chatgpt-api-only target/x86_64-apple-darwin/release/chatgpt-api-only -output target/universal-apple-darwin/release/chatgpt-api-only
+          codesign --force --sign - target/universal-apple-darwin/release/chatgpt-api-only
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -70,8 +76,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p release
-          ditto -c -k --sequesterRsrc --keepParent 'target/release/bundle/macos/ChatGPT API Only.app' "release/ChatGPTApiOnly-2.0.0-macos-$(uname -m).zip"
-          tar -czf "release/chatgpt-api-only-2.0.0-macos-$(uname -m).tar.gz" -C target/release chatgpt-api-only
+          for binary in 'target/universal-apple-darwin/release/bundle/macos/ChatGPT API Only.app/Contents/MacOS/ChatGPTApiOnly' target/universal-apple-darwin/release/chatgpt-api-only; do
+            archs=" $(lipo -archs "$binary") "
+            [[ "$archs" == *" arm64 "* && "$archs" == *" x86_64 "* ]] || exit 1
+          done
+          codesign --verify --deep --strict 'target/universal-apple-darwin/release/bundle/macos/ChatGPT API Only.app'
+          ditto -c -k --sequesterRsrc --keepParent 'target/universal-apple-darwin/release/bundle/macos/ChatGPT API Only.app' release/ChatGPTApiOnly-2.0.0-macos-universal.zip
+          tar -czf release/chatgpt-api-only-2.0.0-macos-universal.tar.gz -C target/universal-apple-darwin/release chatgpt-api-only
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ runner.os }}-${{ runner.arch }}

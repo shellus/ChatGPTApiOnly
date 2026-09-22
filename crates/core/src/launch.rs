@@ -114,14 +114,92 @@ pub fn desktop_executable() -> Result<PathBuf> {
         if let Some(home) = dirs::home_dir() {
             roots.push(home.join("Applications"));
         }
-        for root in roots {
-            let path = root.join("Codex.app/Contents/MacOS/Codex");
-            if path.is_file() {
-                return Ok(path);
+        if let Some(path) = macos_desktop_executable_in(roots) {
+            return Ok(path);
+        }
+        // Spotlight also finds renamed apps and installations outside Applications.
+        // NUL separators preserve paths containing whitespace or newlines.
+        if let Ok(output) = Command::new("/usr/bin/mdfind")
+            .args(["-0", "kMDItemCFBundleIdentifier == 'com.openai.codex'"])
+            .output()
+        {
+            use std::os::unix::ffi::OsStrExt;
+            if output.status.success() {
+                for path in output
+                    .stdout
+                    .split(|byte| *byte == 0)
+                    .filter(|p| !p.is_empty())
+                {
+                    if let Some(executable) = macos_bundle_executable(std::path::Path::new(
+                        std::ffi::OsStr::from_bytes(path),
+                    )) {
+                        return Ok(executable);
+                    }
+                }
             }
         }
     }
     bail!("未找到 Codex 桌面客户端；请安装客户端，或在 CLI 使用 --executable 指定路径")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_desktop_executable_in(roots: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    for root in roots {
+        for name in ["ChatGPT.app", "Codex.app"] {
+            if let Some(executable) = macos_bundle_executable(&root.join(name)) {
+                return Some(executable);
+            }
+        }
+        // Bounded fallback works even with Spotlight disabled. Do not descend
+        // into app bundles or follow directory symlinks recursively.
+        for entry in walkdir::WalkDir::new(&root)
+            .max_depth(3)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|entry| {
+                entry.depth() == 0 || entry.path().extension().is_none_or(|ext| ext != "app")
+            })
+            .filter_map(Result::ok)
+        {
+            // filter_entry prunes bundles; inspect the direct children instead.
+            if !entry.file_type().is_dir() {
+                continue;
+            }
+            let Ok(children) = std::fs::read_dir(entry.path()) else {
+                continue;
+            };
+            let mut bundles: Vec<_> = children
+                .filter_map(Result::ok)
+                .map(|child| child.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "app"))
+                .collect();
+            bundles.sort();
+            for bundle in bundles {
+                if let Some(executable) = macos_bundle_executable(&bundle) {
+                    return Some(executable);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_executable(bundle: &std::path::Path) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let info = plist::Value::from_file(bundle.join("Contents/Info.plist")).ok()?;
+    let dictionary = info.as_dictionary()?;
+    if dictionary.get("CFBundleIdentifier")?.as_string()? != "com.openai.codex" {
+        return None;
+    }
+    let name = dictionary.get("CFBundleExecutable")?.as_string()?;
+    // CFBundleExecutable is a filename, never a relative or absolute path.
+    if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+        return None;
+    }
+    let executable = bundle.join("Contents/MacOS").join(name);
+    let metadata = executable.metadata().ok()?;
+    (metadata.is_file() && metadata.permissions().mode() & 0o111 != 0).then_some(executable)
 }
 pub fn launch_desktop(settings: Settings) -> Result<()> {
     let executable = desktop_executable()?;
@@ -163,4 +241,92 @@ pub fn open_download(updates: bool) -> Result<()> {
         open::that("https://chatgpt.com/codex")?;
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+    use std::fs;
+
+    fn app(root: &std::path::Path, name: &str, executable: &str, identifier: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let executable_name = executable;
+        let contents = root.join(name).join("Contents");
+        let executable = contents.join("MacOS").join(executable);
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"example").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut info = plist::Dictionary::new();
+        info.insert(
+            "CFBundleExecutable".into(),
+            plist::Value::String(executable_name.into()),
+        );
+        info.insert(
+            "CFBundleIdentifier".into(),
+            plist::Value::String(identifier.into()),
+        );
+        plist::to_file_xml(contents.join("Info.plist"), &info).unwrap();
+        executable
+    }
+
+    #[test]
+    fn discovers_current_and_legacy_codex_bundle_names() {
+        for (bundle, executable) in [("ChatGPT.app", "ChatGPT"), ("Codex.app", "Codex")] {
+            let directory = tempfile::tempdir().unwrap();
+            let expected = app(directory.path(), bundle, executable, "com.openai.codex");
+            assert_eq!(
+                macos_desktop_executable_in([directory.path().to_path_buf()]),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn discovers_renamed_nested_bundle_after_missing_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let expected = app(
+            directory.path(),
+            "Tools/My renamed client.app",
+            "Different Binary",
+            "com.openai.codex",
+        );
+        assert_eq!(
+            macos_desktop_executable_in([
+                directory.path().join("missing"),
+                directory.path().into()
+            ]),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn rejects_non_executable_and_unsafe_executable_names() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let executable = app(directory.path(), "Codex.app", "Codex", "com.openai.codex");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(macos_bundle_executable(&directory.path().join("Codex.app")).is_none());
+        app(
+            directory.path(),
+            "Unsafe.app",
+            "../outside",
+            "com.openai.codex",
+        );
+        assert!(macos_bundle_executable(&directory.path().join("Unsafe.app")).is_none());
+    }
+
+    #[test]
+    fn ignores_non_codex_chatgpt_bundle() {
+        let directory = tempfile::tempdir().unwrap();
+        app(
+            directory.path(),
+            "ChatGPT.app",
+            "ChatGPT",
+            "com.openai.chat",
+        );
+        assert_eq!(
+            macos_desktop_executable_in([directory.path().to_path_buf()]),
+            None
+        );
+    }
 }

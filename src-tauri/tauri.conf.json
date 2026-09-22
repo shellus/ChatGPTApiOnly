@@ -28,6 +28,9 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
     }

@@ -87,4 +87,4 @@ chatgpt-api-only repair --yes
 
 Windows 便携 ZIP 只包含 `ChatGPTApiOnly.exe`，需要 WebView2；NSIS 安装包可处理缺失运行时。CLI 单独分发。macOS 使用 `.app` 压缩包，未配置 Apple 发布证书时未经 Developer ID 签名和公证，构建成功不代表无提示分发。
 
-Windows 自动发现当前用户最高版本 `OpenAI.Codex` 包。macOS 查找 `/Applications/Codex.app` 和用户 Applications 目录。客户端缺失或启动失败时留在设置页；安装入口在 Windows 打开 Microsoft Store，其他平台打开 Codex 下载页。macOS“检查更新”是下载入口，不声称执行了更新检查。
+Windows 自动发现当前用户最高版本 `OpenAI.Codex` 包。macOS 优先查找系统和用户 Applications 中的 ChatGPT.app、Codex.app，再有限深度搜索这些目录中的改名应用，最后通过 Spotlight 查找其他安装位置。每个候选都要求 bundle ID 为 `com.openai.codex`，并从 `CFBundleExecutable` 读取可执行文件名，检查文件和执行权限。关闭 Spotlight 时，非标准安装位置可能无法自动发现，CLI 可用 `--executable` 指定路径。客户端缺失或启动失败时留在设置页；安装入口在 Windows 打开 Microsoft Store，其他平台打开 Codex 下载页。macOS“检查更新”是下载入口，不声称执行了更新检查。

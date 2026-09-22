@@ -23,3 +23,6 @@ open = "5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
