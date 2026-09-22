@@ -1896,6 +1896,7 @@ dependencies = [
  "filetime",
  "fs2",
  "open",
+ "plist",
  "rusqlite",
  "serde",
  "serde_json",

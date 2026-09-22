@@ -9,10 +9,10 @@
 | 平台 | 入口 | 分发依赖 |
 | --- | --- | --- |
 | Windows x64 | Tauri GUI、CLI | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
-| macOS Apple Silicon | Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
+| macOS Intel / Apple Silicon | 通用 Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面启动还要求官方客户端支持当前 CPU 和系统版本 |
 | Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js 或系统 SQLite |
 
-macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
+macOS 按 bundle ID 区分 Codex 客户端与其他同名 ChatGPT.app，不能向非 `com.openai.codex` 应用套用相同的域名阻断参数。
 
 ## 桌面使用
 
@@ -47,6 +47,15 @@ npm run tauri -- build
 ```
 
 仅构建桌面可执行文件：`cargo build -p chatgpt-api-only-desktop --release --locked`，此前须完成 `npm run build`。Windows 产物为 `target/release/ChatGPTApiOnly.exe`，CLI 为 `target/release/chatgpt-api-only`（Windows 带 `.exe`）。
+
+macOS 通用 GUI（同时包含 Intel x86_64 与 Apple Silicon arm64）：
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri -- build --bundles app --target universal-apple-darwin
+```
+
+产物在 `target/universal-apple-darwin/release/bundle/macos/ChatGPT API Only.app`。CI 同时构建通用 CLI 并校验两种架构。通用构建不代表所有历史 macOS 版本均可运行；系统 WebView 和官方客户端自身仍有系统版本限制。
 
 ```sh
 npx playwright install chromium
