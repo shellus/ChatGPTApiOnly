@@ -91,6 +91,37 @@ input {
   overflow: visible;
   margin-inline: auto;
 }
+.agent-switch {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 0 auto 18px;
+}
+.agent-switch .rt-Button {
+  min-width: 132px;
+  height: 48px;
+  gap: 9px;
+  border: 1px solid var(--control-border);
+  border-radius: 14px;
+  font-weight: 650;
+  letter-spacing: .01em;
+  box-shadow: 0 5px 16px rgb(44 34 88 / 10%);
+}
+.agent-switch .rt-Button[data-accent-color="iris"] {
+  border-color: transparent;
+  box-shadow: 0 8px 22px rgb(101 84 207 / 25%);
+}
+.agent-icon {
+  display: inline-grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 16px;
+  line-height: 1;
+}
+.agent-icon.codex { background: #6f5ae6; color: #fff; }
+.agent-icon.claude { background: #d97745; color: #fff; }
 .mode-switch::before {
   content: "";
   position: absolute;

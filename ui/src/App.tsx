@@ -265,7 +265,10 @@ export default function App() {
             <div className="agent-switch" role="tablist" aria-label="客户端">
               {(["codex", "claude"] as const).map((name) => (
                 <Button key={name} variant={agent === name ? "solid" : "soft"} disabled={!!busy} onClick={() => switchAgent(name)}>
-                  {name === "codex" ? "Codex" : "Claude"}
+                  <span className={`agent-icon ${name}`} aria-hidden="true">
+                    {name === "codex" ? "✦" : "☁"}
+                  </span>
+                  <span>{name === "codex" ? "Codex" : "Claude"}</span>
                 </Button>
               ))}
             </div>
@@ -377,15 +380,11 @@ export default function App() {
                             })
                           }
                         />
-                        <Field
-                          label="思考层级（可留空）"
-                          value={draft.library.official_effort ?? ""}
+                        <EffortSelect
+                          label="思考层级"
+                          value={draft.library.official_effort ?? "medium"}
                           disabled={!!busy}
-                          onChange={(v) =>
-                            edit((next) => {
-                              next.library.official_effort = v;
-                            })
-                          }
+                          onChange={(v) => edit((next) => { next.library.official_effort = v; })}
                         />
                         <Field
                           label="HTTP 代理"
@@ -430,9 +429,9 @@ export default function App() {
                             disabled={!!busy}
                             onChange={(v) => field("model", v)}
                           />
-                          <Field
+                          <EffortSelect
                             label="思考层级"
-                            value={fields.effort}
+                            value={fields.effort || "medium"}
                             disabled={!!busy}
                             onChange={(v) => field("effort", v)}
                           />
@@ -624,6 +623,33 @@ function Field({
         spellCheck={false}
       />
       {hint && <span className="hint">{hint}</span>}
+    </label>
+  );
+}
+
+function EffortSelect({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <Select.Root value={value} onValueChange={onChange} disabled={disabled}>
+        <Select.Trigger aria-label={label} />
+        <Select.Content>
+          <Select.Item value="low">低 · 快速</Select.Item>
+          <Select.Item value="medium">中 · 平衡</Select.Item>
+          <Select.Item value="high">高 · 深入</Select.Item>
+          <Select.Item value="xhigh">极高 · 最深入</Select.Item>
+        </Select.Content>
+      </Select.Root>
     </label>
   );
 }
