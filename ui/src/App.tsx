@@ -26,6 +26,7 @@ const same = (a: unknown, b: unknown): boolean =>
 export default function App() {
   const [saved, setSaved] = useState<View>();
   const [draft, setDraft] = useState<Draft>();
+  const [agent, setAgent] = useState<"codex" | "claude">("codex");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -52,6 +53,23 @@ export default function App() {
   const install = (view: View) => {
     setSaved(view);
     setDraft(clone(view.draft));
+  };
+  const materialize = () => {
+    if (!draft) return draft;
+    const next = clone(draft);
+    next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
+    return next;
+  };
+  const switchAgent = (nextAgent: "codex" | "claude") => {
+    if (!draft || nextAgent === agent) return;
+    const next = clone(draft);
+    next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
+    const selected = next[nextAgent];
+    next.mode = selected.mode;
+    next.library = selected.library;
+    next.custom_fields = selected.custom_fields;
+    setDraft(next);
+    setAgent(nextAgent);
   };
   const reload = () =>
     perform("读取配置", async () => {
@@ -179,7 +197,7 @@ export default function App() {
     });
   const save = () =>
     perform("保存配置", async () => {
-      install(await invoke<View>("save", { revision: saved!.revision, draft }));
+      install(await invoke<View>("save", { revision: saved!.revision, draft: materialize() }));
       setMessage("已保存配置；尚未启动客户端。");
     });
   const launch = () => {
@@ -188,7 +206,7 @@ export default function App() {
       return;
     }
     void perform("启动客户端", async () => {
-      await invoke("launch", { revision: saved!.revision, draft });
+      await invoke("launch", { revision: saved!.revision, draft: materialize() });
     });
   };
   const repair = () =>
@@ -243,6 +261,14 @@ export default function App() {
         </header>
         <section className="content" aria-busy={!!busy}>
           {draft ? (
+            <>
+            <div className="agent-switch" role="tablist" aria-label="客户端">
+              {(["codex", "claude"] as const).map((name) => (
+                <Button key={name} variant={agent === name ? "solid" : "soft"} disabled={!!busy} onClick={() => switchAgent(name)}>
+                  {name === "codex" ? "Codex" : "Claude"}
+                </Button>
+              ))}
+            </div>
             <Tabs.Root
               value={mode}
               onValueChange={(value) =>
@@ -444,6 +470,7 @@ export default function App() {
                 </div>
               </Tabs.Content>
             </Tabs.Root>
+            </>
           ) : (
             <p>{busy || "配置尚未载入。可点击“重新读取”重试。"}</p>
           )}

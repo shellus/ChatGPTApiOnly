@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use launcher_core::{Draft, Session, Store, View, WindowState};
+use launcher_core::{Agent, Draft, Session, Store, View, WindowState};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -52,7 +52,7 @@ fn launch(
     let settings = guard
         .as_ref()
         .ok_or("请先读取配置")?
-        .launch_settings(&revision, &draft)
+        .launch_settings_for(&revision, &draft, Agent::Codex)
         .map_err(|e| failure(&state, "启动校验", format!("{e:#}")))?;
     launcher_core::launch::launch_desktop(settings)
         .map_err(|e| failure(&state, "启动客户端", format!("{e:#}")))?;
@@ -85,7 +85,7 @@ fn close(app: tauri::AppHandle) {
 }
 #[tauri::command]
 fn open_download(updates: bool) -> Result<(), String> {
-    launcher_core::launch::open_download(updates).map_err(|e| format!("{e:#}"))
+    launcher_core::launch::open_download(Agent::Codex, updates).map_err(|e| format!("{e:#}"))
 }
 
 /// 显示器可能在两次打开之间被拔掉或重新排列；窗口中心不落在任何显示器上时

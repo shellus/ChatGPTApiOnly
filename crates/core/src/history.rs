@@ -39,7 +39,7 @@ pub fn repair(store: &Store, progress: impl Fn(Progress)) -> Result<Report> {
     let _lock = store.lock()?;
     let mut paths = Vec::new();
     for name in ["sessions", "archived_sessions"] {
-        let root = store.root.join(name);
+        let root = store.roots.codex.join(name);
         if !root.exists() {
             continue;
         }
@@ -60,7 +60,7 @@ pub fn repair(store: &Store, progress: impl Fn(Progress)) -> Result<Report> {
         }
         report(&progress, "扫描对话", i + 1, paths.len());
     }
-    let databases = databases(&store.root)?;
+    let databases = databases(&store.roots.codex)?;
     let mut connection = Connection::open_in_memory()?;
     connection.busy_timeout(Duration::from_secs(3))?;
     // A single transaction spans attached databases; SQL errors roll all databases back.
@@ -97,21 +97,22 @@ pub fn repair(store: &Store, progress: impl Fn(Progress)) -> Result<Report> {
         });
     }
     let backup = store
-        .root
+        .roots
+        .codex
         .join("backups_state/provider-sync")
         .join(uuid::Uuid::new_v4().simple().to_string());
     fs::create_dir_all(&backup)?;
     let backup_total = rollouts.len() + databases.len();
     let mut completed = 0;
     for rollout in &rollouts {
-        let destination = backup.join(rollout.path.strip_prefix(&store.root)?);
+        let destination = backup.join(rollout.path.strip_prefix(&store.roots.codex)?);
         fs::create_dir_all(destination.parent().unwrap())?;
         fs::copy(rollout.original.path(), destination)?;
         completed += 1;
         report(&progress, "备份对话", completed, backup_total);
     }
     for path in &databases {
-        let destination = backup.join(path.strip_prefix(&store.root)?);
+        let destination = backup.join(path.strip_prefix(&store.roots.codex)?);
         fs::create_dir_all(destination.parent().unwrap())?;
         let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut dest = Connection::open(destination)?;
@@ -119,13 +120,13 @@ pub fn repair(store: &Store, progress: impl Fn(Progress)) -> Result<Report> {
         completed += 1;
         report(&progress, "备份对话", completed, backup_total);
     }
-    if let Some(config) = read(&store.root.join("config.toml"))? {
+    if let Some(config) = read(&store.roots.codex.join("config.toml"))? {
         write(&backup.join("config.toml"), Some(&config))?;
     }
     write(
         &backup.join("manifest.json"),
         Some(&serde_json::to_vec_pretty(
-            &serde_json::json!({"provider":"custom", "rollouts":rollouts.iter().map(|r| r.path.strip_prefix(&store.root).unwrap()).collect::<Vec<_>>(),"databases":databases.iter().map(|p| p.strip_prefix(&store.root).unwrap()).collect::<Vec<_>>()}),
+            &serde_json::json!({"provider":"custom", "rollouts":rollouts.iter().map(|r| r.path.strip_prefix(&store.roots.codex).unwrap()).collect::<Vec<_>>(),"databases":databases.iter().map(|p| p.strip_prefix(&store.roots.codex).unwrap()).collect::<Vec<_>>()}),
         )?),
     )?;
     let mut applied = Vec::new();

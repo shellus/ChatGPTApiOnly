@@ -90,7 +90,7 @@ fn each_external_file_change_blocks_save_and_launch() {
     for path in [
         "config.toml",
         "auth.json",
-        "launcher-profiles/modes.json",
+        "launcher-profiles/profiles.json",
         ".env",
     ] {
         let (_dir, store) = fixture();
@@ -248,9 +248,11 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
     assert!(proxy_env("# END CHATGPT API ONLY PROXY\n", "").is_err());
     let env_before: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
     let settings = launcher_core::launch::Settings {
+        agent: launcher_core::Agent::Codex,
         mode: Mode::Official,
         proxy: "http://127.0.0.1:7890".into(),
         config_dir: "example".into(),
+        roots: launcher_core::storage::Roots::under(std::path::Path::new("example")),
     };
     let plan = settings.plan("example".into(), true, vec![]).unwrap();
     let _command = plan.command();

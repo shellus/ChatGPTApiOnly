@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use launcher_core::{Draft, Mode, Session, Store};
+use launcher_core::{Agent, Draft, Mode, Roots, Session, Store};
 use std::{
     io::{self, Read, Write},
     path::PathBuf,
@@ -15,8 +15,24 @@ struct Cli {
     /// Codex 配置目录；默认 CODEX_HOME 或 ~/.codex
     #[arg(long, global = true)]
     config_dir: Option<PathBuf>,
+    /// 管理的客户端。
+    #[arg(long, value_enum, default_value_t = AgentArg::Codex, global = true)]
+    agent: AgentArg,
     #[command(subcommand)]
     command: Action,
+}
+#[derive(Clone, Copy, ValueEnum)]
+enum AgentArg {
+    Codex,
+    Claude,
+}
+impl From<AgentArg> for Agent {
+    fn from(value: AgentArg) -> Self {
+        match value {
+            AgentArg::Codex => Agent::Codex,
+            AgentArg::Claude => Agent::Claude,
+        }
+    }
 }
 #[derive(Clone, Copy, ValueEnum)]
 enum Kind {
@@ -141,17 +157,22 @@ fn key(path: PathBuf) -> Result<String> {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let store = if let Some(path) = cli.config_dir {
-        Store::new(path)
+        Store::new(Roots {
+            acs: path.join("launcher-profiles"),
+            codex: path.clone(),
+            claude: path.join("claude"),
+            claude_json: path.join("claude.json"),
+        })
     } else {
         Store::discover()?
     };
-    let result = execute(store.clone(), cli.command);
+    let result = execute(store.clone(), cli.command, cli.agent.into());
     if let Err(error) = &result {
         store.log("CLI", &format!("{error:#}"));
     }
     result
 }
-fn execute(store: Store, action: Action) -> Result<()> {
+fn execute(store: Store, action: Action, agent: Agent) -> Result<()> {
     if let Action::Repair { yes } = action {
         confirm(yes, "将 sessions、archived_sessions 和 SQLite 历史的 provider ID 改为 custom；请先关闭正在写入历史的 Codex。继续？")?;
         let report = launcher_core::history::repair(&store, |p| {
@@ -163,15 +184,16 @@ fn execute(store: Store, action: Action) -> Result<()> {
     let mut session = Session::open(store)?;
     let view = session.view();
     let mut draft: Draft = view.draft;
+    let mut agent_draft = draft.agent(agent).clone();
     match action {
         Action::List => {
             let entries = |mode| {
-                draft.library.profiles(mode).iter().map(|p| serde_json::json!({"id":p.id,"name":p.name.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or("未命名配置"),"selected":p.id == draft.library.selection(mode),"email":p.email})).collect::<Vec<_>>()
+                agent_draft.library.profiles(mode).iter().map(|p| serde_json::json!({"id":p.id,"name":p.name.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or("未命名配置"),"selected":p.id == agent_draft.library.selection(mode),"email":p.email})).collect::<Vec<_>>()
             };
             println!(
                 "{}",
                 serde_json::to_string_pretty(
-                    &serde_json::json!({"mode":draft.mode,"official_accounts":entries(Mode::Official),"custom_providers":entries(Mode::Custom),"official_proxy_url":draft.library.official_proxy_url})
+                    &serde_json::json!({"mode":agent_draft.mode,"official_accounts":entries(Mode::Official),"custom_providers":entries(Mode::Custom),"official_proxy_url":agent_draft.library.official_proxy_url})
                 )?
             );
             return Ok(());
@@ -197,9 +219,9 @@ fn execute(store: Store, action: Action) -> Result<()> {
             copy,
         } => {
             let mode = kind.into();
-            let id = draft.add(mode, &name, copy.as_deref())?;
+            let id = agent_draft.add(mode, &name, copy.as_deref())?;
             if mode == Mode::Custom {
-                let f = draft.custom_fields.get_mut(&id).unwrap();
+                let f = agent_draft.custom_fields.get_mut(&id).unwrap();
                 if let Some(v) = provider {
                     f.provider_name = v;
                 }
@@ -216,7 +238,7 @@ fn execute(store: Store, action: Action) -> Result<()> {
                     f.effort = v;
                 }
             }
-            draft.mode = mode;
+            agent_draft.mode = mode;
             eprintln!("配置 ID：{id}");
         }
         Action::Edit {
@@ -227,7 +249,7 @@ fn execute(store: Store, action: Action) -> Result<()> {
             model,
             effort,
         } => {
-            let f = draft.custom_fields.get_mut(&id).context("API 配置不存在")?;
+            let f = agent_draft.custom_fields.get_mut(&id).context("API 配置不存在")?;
             if let Some(v) = provider {
                 f.provider_name = v;
             }
@@ -245,14 +267,14 @@ fn execute(store: Store, action: Action) -> Result<()> {
             }
         }
         Action::Use { kind, id } => {
-            draft.mode = kind.into();
-            draft.library.select(draft.mode, id);
+            agent_draft.mode = kind.into();
+            agent_draft.library.select(agent_draft.mode, id);
         }
         Action::Rename { kind, id, name } => {
             if name.trim().is_empty() {
                 bail!("请输入名称")
             }
-            draft
+            agent_draft
                 .library
                 .profiles_mut(kind.into())
                 .iter_mut()
@@ -262,10 +284,10 @@ fn execute(store: Store, action: Action) -> Result<()> {
         }
         Action::Delete { kind, id, yes } => {
             confirm(yes, "删除配置并保存？")?;
-            draft.delete(kind.into(), &id)?;
+            agent_draft.delete(kind.into(), &id)?;
         }
         Action::Proxy { url } => {
-            draft.library.official_proxy_url = Some(url);
+            agent_draft.library.official_proxy_url = Some(url);
         }
         Action::Launch {
             desktop,
@@ -273,11 +295,11 @@ fn execute(store: Store, action: Action) -> Result<()> {
             dry_run,
             args,
         } => {
-            let settings = session.launch_settings(&view.revision, &draft)?;
+            let settings = session.launch_settings_for(&view.revision, &draft, agent)?;
             let executable = match executable {
                 Some(p) => p,
-                None if desktop => launcher_core::launch::desktop_executable()?,
-                None => launcher_core::launch::cli_executable(),
+                None if desktop => launcher_core::launch::desktop_executable(agent)?,
+                None => launcher_core::launch::cli_executable(agent),
             };
             let plan = settings.plan(executable, desktop, args)?;
             if dry_run {
@@ -292,6 +314,7 @@ fn execute(store: Store, action: Action) -> Result<()> {
         }
         Action::Repair { .. } => unreachable!(),
     }
+    *draft.agent_mut(agent) = agent_draft;
     session.save(&view.revision, &draft)?;
     println!("已保存配置；未启动客户端");
     Ok(())

@@ -28,6 +28,14 @@ export interface Library {
   official_effort?: string | null;
 }
 export interface Draft {
+  codex: AgentDraft;
+  claude: AgentDraft;
+  mode: Mode;
+  library: Library;
+  custom_fields: Record<string, Fields>;
+}
+export interface AgentDraft {
+  agent: "codex" | "claude";
   mode: Mode;
   library: Library;
   custom_fields: Record<string, Fields>;
@@ -36,6 +44,7 @@ export interface View {
   revision: string;
   draft: Draft;
   config_dir: string;
+  roots?: { acs: string; codex: string; claude: string; claude_json: string };
 }
 export interface Progress {
   phase: string;

@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -8,47 +9,149 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const FILES: [&str; 4] = [
-    "config.toml",
-    "auth.json",
-    "launcher-profiles/modes.json",
-    ".env",
-];
-const WINDOW_STATE: &str = "launcher-profiles/window.json";
+/// 目标文件的读写视角。整份文件参与基线时用 `Whole`；`Field` 只把 JSON 对象的
+/// 一个顶层字段纳入基线并局部改写，供 `~/.claude.json` 这类由客户端持续写入的
+/// 大文件使用——否则每次保存都会因为无关字段的变动报外部修改。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lens {
+    Whole,
+    Field(&'static str),
+}
+pub struct Target {
+    pub label: &'static str,
+    pub path: PathBuf,
+    pub lens: Lens,
+}
+
+pub const LIBRARY: usize = 0;
+pub const CODEX_CONFIG: usize = 1;
+pub const CODEX_AUTH: usize = 2;
+pub const CODEX_ENV: usize = 3;
+pub const CLAUDE_SETTINGS: usize = 4;
+pub const CLAUDE_CREDENTIALS: usize = 5;
+pub const CLAUDE_ACCOUNT: usize = 6;
+pub const TARGETS: usize = 7;
+
+const WINDOW_STATE: &str = "window.json";
 pub type Snapshot = Vec<Option<Vec<u8>>>;
 
-/// 桌面窗口的逻辑尺寸与位置。只描述本机窗口，不属于 FILES 基线，
-/// 因此读写它不会触发保存与启动的外部变化校验。
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WindowState {
-    pub width: f64,
-    pub height: f64,
-    pub x: f64,
-    pub y: f64,
-    pub maximized: bool,
+/// 各客户端的配置根目录。配置库、窗口状态和日志放在本程序自己的 `acs` 目录，
+/// 其余目录属于被管理的客户端。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Roots {
+    pub acs: PathBuf,
+    pub codex: PathBuf,
+    pub claude: PathBuf,
+    pub claude_json: PathBuf,
+}
+impl Roots {
+    pub fn discover() -> Result<Self> {
+        let home = dirs::home_dir();
+        let acs = std::env::var_os("ACS_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|p| p.join(".acs")))
+            .context("无法确定 ACS 配置目录")?;
+        let codex = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|p| p.join(".codex")))
+            .context("无法确定 Codex 配置目录")?;
+        let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+        let claude = claude_home
+            .clone()
+            .or_else(|| home.as_ref().map(|p| p.join(".claude")))
+            .context("无法确定 Claude 配置目录")?;
+        // 设置 CLAUDE_CONFIG_DIR 时 Claude Code 把 .claude.json 也放进该目录。
+        let claude_json = match claude_home {
+            Some(dir) => dir.join(".claude.json"),
+            None => home.context("无法确定用户主目录")?.join(".claude.json"),
+        };
+        Ok(Self {
+            acs,
+            codex,
+            claude,
+            claude_json,
+        })
+    }
+    /// 测试与 GUI 自动化使用的隔离目录，禁止落到真实用户配置上。
+    pub fn under(dir: &Path) -> Self {
+        Self {
+            acs: dir.join("acs"),
+            codex: dir.join("codex"),
+            claude: dir.join("claude"),
+            claude_json: dir.join("claude.json"),
+        }
+    }
+}
+impl From<PathBuf> for Roots {
+    fn from(codex: PathBuf) -> Self {
+        Self {
+            acs: codex.join("launcher-profiles"),
+            codex: codex.clone(),
+            claude: codex.join("claude"),
+            claude_json: codex.join("claude.json"),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Store {
+    pub roots: Roots,
+    /// 兼容旧版核心 API；历史数据均位于 Codex 根目录。
     pub root: PathBuf,
 }
 impl Store {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
+    pub fn new<R: Into<Roots>>(roots: R) -> Self {
+        let roots = roots.into();
+        Self { root: roots.codex.clone(), roots }
     }
     pub fn discover() -> Result<Self> {
-        let root = std::env::var_os("CHATGPT_API_ONLY_CONFIG_DIR")
-            .or_else(|| std::env::var_os("CODEX_HOME"))
-            .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|p| p.join(".codex")))
-            .context("无法确定 Codex 配置目录")?;
-        Ok(Self::new(root))
+        Ok(Self::new(Roots::discover()?))
+    }
+    pub fn targets(&self) -> Vec<Target> {
+        let r = &self.roots;
+        vec![
+            Target {
+                label: "profiles.json",
+                path: r.acs.join("profiles.json"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: "config.toml",
+                path: r.codex.join("config.toml"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: "auth.json",
+                path: r.codex.join("auth.json"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: ".env",
+                path: r.codex.join(".env"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: "settings.json",
+                path: r.claude.join("settings.json"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: ".credentials.json",
+                path: r.claude.join(".credentials.json"),
+                lens: Lens::Whole,
+            },
+            Target {
+                label: ".claude.json 的 oauthAccount",
+                path: r.claude_json.clone(),
+                lens: Lens::Field("oauthAccount"),
+            },
+        ]
     }
     pub fn snapshot(&self) -> Result<Snapshot> {
-        FILES.iter().map(|p| read(&self.root.join(p))).collect()
+        self.targets().iter().map(read_target).collect()
     }
     pub fn lock(&self) -> Result<File> {
-        let path = self.root.join("launcher-profiles/operation.lock");
+        let path = self.roots.acs.join("operation.lock");
         fs::create_dir_all(path.parent().unwrap())?;
         let file = OpenOptions::new()
             .read(true)
@@ -67,26 +170,27 @@ impl Store {
         Ok(())
     }
     pub fn commit(&self, before: &Snapshot, after: &Snapshot) -> Result<()> {
-        self.commit_with(before, after, write)
+        self.commit_with(before, after, write_target)
     }
     fn commit_with(
         &self,
         before: &Snapshot,
         after: &Snapshot,
-        mut writer: impl FnMut(&Path, Option<&[u8]>) -> Result<()>,
+        mut writer: impl FnMut(&Target, Option<&[u8]>) -> Result<()>,
     ) -> Result<()> {
         self.check(before)?;
+        let targets = self.targets();
         let mut written = Vec::new();
         let operation = (|| -> Result<()> {
-            for i in [3, 2, 1, 0] {
+            // 倒序写入，让配置库最后落盘：中途失败时配置库仍与客户端现状一致。
+            for i in (0..targets.len()).rev() {
                 if before[i] == after[i] {
                     continue;
                 }
-                let path = self.root.join(FILES[i]);
-                if read(&path)? != before[i] {
-                    bail!("{} 在保存期间发生变化", FILES[i]);
+                if read_target(&targets[i])? != before[i] {
+                    bail!("{} 在保存期间发生变化", targets[i].label);
                 }
-                writer(&path, after[i].as_deref())?;
+                writer(&targets[i], after[i].as_deref())?;
                 written.push(i);
             }
             Ok(())
@@ -94,12 +198,11 @@ impl Store {
         if let Err(error) = operation {
             let mut failures = Vec::new();
             for i in written.into_iter().rev() {
-                let path = self.root.join(FILES[i]);
                 let result = (|| -> Result<()> {
-                    if read(&path)? != after[i] {
-                        bail!("{} 再次变化，未覆盖外部修改", FILES[i])
+                    if read_target(&targets[i])? != after[i] {
+                        bail!("{} 再次变化，未覆盖外部修改", targets[i].label)
                     }
-                    write(&path, before[i].as_deref())
+                    write_target(&targets[i], before[i].as_deref())
                 })();
                 if let Err(e) = result {
                     failures.push(e.to_string());
@@ -117,30 +220,41 @@ impl Store {
         Ok(())
     }
     pub fn window_state(&self) -> Option<WindowState> {
-        let bytes = read(&self.root.join(WINDOW_STATE)).ok().flatten()?;
+        let bytes = read(&self.roots.acs.join(WINDOW_STATE)).ok().flatten()?;
         serde_json::from_slice(&bytes).ok()
     }
     /// 记不住窗口尺寸只影响下次打开时的观感，失败只记日志，不打断退出或启动。
     pub fn set_window_state(&self, state: &WindowState) {
         let result = serde_json::to_vec_pretty(state)
             .map_err(anyhow::Error::from)
-            .and_then(|bytes| write(&self.root.join(WINDOW_STATE), Some(&bytes)));
+            .and_then(|bytes| write(&self.roots.acs.join(WINDOW_STATE), Some(&bytes)));
         if let Err(e) = result {
             self.log("保存窗口尺寸", &format!("{e:#}"));
         }
     }
     pub fn log(&self, stage: &str, error: &str) {
-        let dir = self.root.join("launcher-profiles/logs");
+        let dir = self.roots.acs.join("logs");
         if fs::create_dir_all(&dir).is_ok() {
             if let Ok(mut f) = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(dir.join("launcher.log"))
+                .open(dir.join("acs.log"))
             {
                 let _ = writeln!(f, "{:?} [{stage}] {error}", std::time::SystemTime::now());
             }
         }
     }
+}
+
+/// 桌面窗口的逻辑尺寸与位置。只描述本机窗口，不属于目标文件基线，
+/// 因此读写它不会触发保存与启动的外部变化校验。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowState {
+    pub width: f64,
+    pub height: f64,
+    pub x: f64,
+    pub y: f64,
+    pub maximized: bool,
 }
 
 pub fn revision(snapshot: &Snapshot) -> String {
@@ -156,6 +270,51 @@ pub fn revision(snapshot: &Snapshot) -> String {
         }
     }
     format!("{:x}", hash.finalize())
+}
+fn object(path: &Path) -> Result<Value> {
+    let Some(bytes) = read(path)? else {
+        return Ok(Value::Object(Default::default()));
+    };
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Value::Object(Default::default()));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("{} 格式无效", path.display()))?;
+    if !value.is_object() {
+        bail!("{} 必须是 JSON 对象", path.display())
+    }
+    Ok(value)
+}
+pub fn read_target(target: &Target) -> Result<Option<Vec<u8>>> {
+    match target.lens {
+        Lens::Whole => read(&target.path),
+        Lens::Field(key) => Ok(object(&target.path)?
+            .get(key)
+            .filter(|v| !v.is_null())
+            .map(serde_json::to_vec)
+            .transpose()?),
+    }
+}
+pub fn write_target(target: &Target, bytes: Option<&[u8]>) -> Result<()> {
+    match target.lens {
+        Lens::Whole => write(&target.path, bytes),
+        Lens::Field(key) => {
+            if bytes.is_none() && read(&target.path)?.is_none() {
+                return Ok(());
+            }
+            let mut value = object(&target.path)?;
+            let map = value.as_object_mut().unwrap();
+            match bytes {
+                Some(bytes) => {
+                    map.insert(key.into(), serde_json::from_slice(bytes)?);
+                }
+                None => {
+                    map.remove(key);
+                }
+            }
+            write(&target.path, Some(&serde_json::to_vec_pretty(&value)?))
+        }
+    }
 }
 pub fn read(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -189,28 +348,60 @@ mod tests {
     #[test]
     fn every_write_failure_restores_existing_and_absent_files() {
         for existing in [false, true] {
-            for fail_at in 0..4 {
+            for fail_at in 0..TARGETS {
                 let dir = tempfile::tempdir().unwrap();
-                let store = Store::new(dir.path().into());
+                let store = Store::new(Roots::under(dir.path()));
                 if existing {
-                    for name in FILES {
-                        write(&store.root.join(name), Some(b"example original")).unwrap();
+                    for target in store.targets() {
+                        let original = match target.lens {
+                            Lens::Whole => b"example original".to_vec(),
+                            Lens::Field(key) => {
+                                format!("{{\"keep\":1,\"{key}\":{{\"a\":\"original\"}}}}").into()
+                            }
+                        };
+                        write(&target.path, Some(&original)).unwrap();
                     }
                 }
                 let before = store.snapshot().unwrap();
-                let after = vec![Some(b"example changed".to_vec()); 4];
+                let after = store
+                    .targets()
+                    .iter()
+                    .map(|target| match target.lens {
+                        Lens::Whole => Some(b"example changed".to_vec()),
+                        Lens::Field(_) => Some(br#"{"a":"changed"}"#.to_vec()),
+                    })
+                    .collect::<Snapshot>();
                 let mut count = 0;
-                let result = store.commit_with(&before, &after, |path, bytes| {
+                let result = store.commit_with(&before, &after, |target, bytes| {
                     let fail = count == fail_at;
                     count += 1;
                     if fail {
                         bail!("example disk failure");
                     }
-                    write(path, bytes)
+                    write_target(target, bytes)
                 });
                 assert!(result.is_err());
                 assert_eq!(store.snapshot().unwrap(), before);
             }
         }
+    }
+    #[test]
+    fn field_lens_keeps_unrelated_content_and_reports_absence() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Target {
+            label: "example",
+            path: dir.path().join("example.json"),
+            lens: Lens::Field("oauthAccount"),
+        };
+        assert_eq!(read_target(&target).unwrap(), None);
+        write(&target.path, Some(br#"{"projects":{"a":1}}"#)).unwrap();
+        assert_eq!(read_target(&target).unwrap(), None);
+        write_target(&target, Some(br#"{"emailAddress":"example@example.com"}"#)).unwrap();
+        let stored: Value = serde_json::from_slice(&read(&target.path).unwrap().unwrap()).unwrap();
+        assert_eq!(stored["projects"]["a"], 1);
+        assert_eq!(stored["oauthAccount"]["emailAddress"], "example@example.com");
+        write_target(&target, None).unwrap();
+        assert_eq!(read_target(&target).unwrap(), None);
+        assert!(read(&target.path).unwrap().is_some());
     }
 }
