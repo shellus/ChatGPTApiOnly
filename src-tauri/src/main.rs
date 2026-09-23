@@ -27,7 +27,12 @@ fn load(state: tauri::State<State>) -> Result<View, String> {
     Ok(view)
 }
 #[tauri::command]
-fn save(state: tauri::State<State>, revision: String, draft: Draft) -> Result<View, String> {
+fn save(
+    state: tauri::State<State>,
+    revision: String,
+    draft: Draft,
+    agent: Agent,
+) -> Result<View, String> {
     let mut guard = state
         .session
         .try_lock()
@@ -35,7 +40,7 @@ fn save(state: tauri::State<State>, revision: String, draft: Draft) -> Result<Vi
     guard
         .as_mut()
         .ok_or("请先读取配置")?
-        .save(&revision, &draft)
+        .save_for(&revision, &draft, agent)
         .map_err(|e| failure(&state, "保存配置", format!("{e:#}")))
 }
 #[tauri::command]

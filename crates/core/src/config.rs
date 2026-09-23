@@ -10,7 +10,9 @@ use std::collections::{BTreeMap, HashSet};
 
 /// 被管理的客户端。两个客户端各自独立生效，不是二选一：Codex 可以停在官方账号，
 /// 同时 Claude 走自定义 API。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Agent {
     #[default]
@@ -289,13 +291,15 @@ impl AgentDraft {
         let agent = self.agent;
         let fields = std::mem::take(&mut self.custom_fields);
         for p in &mut self.library.custom_providers {
-            fields
-                .get(&p.id)
-                .context("API 表单缺失")?
-                .apply(agent, p)?;
+            fields.get(&p.id).context("API 表单缺失")?.apply(agent, p)?;
         }
         self.custom_fields = fields;
-        let proxy = normalize_proxy(self.library.official_proxy_url.as_deref().unwrap_or_default())?;
+        let proxy = normalize_proxy(
+            self.library
+                .official_proxy_url
+                .as_deref()
+                .unwrap_or_default(),
+        )?;
         self.library.official_proxy_url = Some(proxy);
         Ok(self
             .library
@@ -398,6 +402,12 @@ impl Session {
         self.store.check(&self.baseline)
     }
     pub fn save(&mut self, rev: &str, draft: &Draft) -> Result<View> {
+        self.save_scope(rev, draft, None)
+    }
+    pub fn save_for(&mut self, rev: &str, draft: &Draft, agent: Agent) -> Result<View> {
+        self.save_scope(rev, draft, Some(agent))
+    }
+    fn save_scope(&mut self, rev: &str, draft: &Draft, agent: Option<Agent>) -> Result<View> {
         let _lock = self.store.lock()?;
         self.check(rev)?;
         let mut draft = draft.clone();
@@ -412,8 +422,15 @@ impl Session {
             draft.codex.custom_fields = draft.custom_fields.clone();
         }
         let mut after = self.baseline.clone();
-        codex::apply(&mut after, &self.baseline, &mut draft.codex)?;
-        claude::apply(&mut after, &self.baseline, &mut draft.claude)?;
+        let codex_changed = draft.codex != self.original.codex;
+        let claude_changed = draft.claude != self.original.claude;
+        // 当前客户端即使没有修改也执行校验；其他客户端只处理实际草稿变更。
+        if codex_changed || agent.is_none_or(|a| a == Agent::Codex) {
+            codex::apply(&mut after, &self.baseline, &mut draft.codex)?;
+        }
+        if claude_changed || agent.is_none_or(|a| a == Agent::Claude) {
+            claude::apply(&mut after, &self.baseline, &mut draft.claude)?;
+        }
         after[LIBRARY] = Some(serde_json::to_vec_pretty(&Libraries {
             codex: draft.codex.library.clone(),
             claude: draft.claude.library.clone(),
@@ -475,8 +492,8 @@ fn libraries(store: &Store, baseline: &Snapshot) -> Result<Libraries> {
     let Some(bytes) = read(&legacy)? else {
         return Ok(Libraries::default());
     };
-    let v: Value = serde_json::from_slice(&bytes)
-        .with_context(|| format!("{} 格式无效", legacy.display()))?;
+    let v: Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("{} 格式无效", legacy.display()))?;
     if !v["official_accounts"].is_array() || !v["custom_providers"].is_array() {
         bail!("{} 配置结构不正确", legacy.display())
     }

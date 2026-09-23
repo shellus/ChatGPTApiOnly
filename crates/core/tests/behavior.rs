@@ -59,6 +59,60 @@ fn database(store: &Store, filename: &str, fail: bool) -> Connection {
 }
 
 #[test]
+fn saving_claude_preserves_invalid_unchanged_codex() {
+    let (_dir, store) = fixture();
+    let config = "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://codex.example.com\"\n";
+    let auth = "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"example-codex-key\"}";
+    fs::write(store.root.join("config.toml"), config).unwrap();
+    fs::write(store.root.join("auth.json"), auth).unwrap();
+    let mut session = Session::open(store.clone()).unwrap();
+    let mut draft = session.original.clone();
+    draft.claude.mode = Mode::Custom;
+    let id = draft
+        .claude
+        .add(Mode::Custom, "example Claude", None)
+        .unwrap();
+    draft.claude.custom_fields.insert(
+        id,
+        CustomFields {
+            base_url: "https://claude.example.com".into(),
+            api_key: "example-claude-key".into(),
+            model: "example-model".into(),
+            ..Default::default()
+        },
+    );
+    session
+        .save_for(
+            &session.view().revision,
+            &draft,
+            launcher_core::Agent::Claude,
+        )
+        .unwrap();
+    session
+        .save_for(
+            &session.view().revision,
+            &session.original.clone(),
+            launcher_core::Agent::Claude,
+        )
+        .unwrap();
+    assert_eq!(read(&store, "config.toml"), config);
+    assert_eq!(read(&store, "auth.json"), auth);
+    assert!(!store.root.join(".env").exists());
+    let settings: Value = serde_json::from_str(&read(&store, "claude/settings.json")).unwrap();
+    assert_eq!(
+        settings["env"]["ANTHROPIC_BASE_URL"],
+        "https://claude.example.com"
+    );
+    session
+        .launch_settings_for(
+            &session.view().revision,
+            &session.original,
+            launcher_core::Agent::Claude,
+        )
+        .unwrap();
+}
+
+#[test]
 fn opening_and_drafts_do_not_write() {
     let (_dir, store) = fixture();
     let session = Session::open(store.clone()).unwrap();

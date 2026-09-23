@@ -9,12 +9,15 @@ import assert from 'node:assert/strict';
 const fixture = await mkdtemp(join(tmpdir(), 'chatgpt-api-only-example-'));
 const port = 19227;
 const executable = resolve(process.argv[2] ?? 'target/release/ChatGPTApiOnly.exe');
-const windowState = join(fixture, 'launcher-profiles', 'window.json');
+const windowState = join(fixture, 'acs', 'window.json');
 let child, browser;
 
 async function open() {
   child = spawn(executable, [], { windowsHide: true, env: {
     ...process.env, CHATGPT_API_ONLY_CONFIG_DIR: fixture,
+    ACS_HOME: join(fixture, 'acs'),
+    CODEX_HOME: join(fixture, 'codex'),
+    CLAUDE_CONFIG_DIR: join(fixture, 'claude'),
     WEBVIEW2_USER_DATA_FOLDER: join(fixture, 'webview'),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
   } });
@@ -30,6 +33,11 @@ async function open() {
   const context = browser.contexts()[0];
   const page = context.pages()[0] ?? await context.waitForEvent('page');
   await page.getByRole('tab', { name: '官方账号', exact: true }).waitFor();
+  const view = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('load'));
+  for (const name of ['acs', 'codex', 'claude']) {
+    assert.equal(resolve(view.roots[name]), join(fixture, name), `Refusing writes outside isolated ${name} fixture`);
+  }
+  assert.equal(resolve(view.roots.claude_json), join(fixture, 'claude', '.claude.json'));
   return page;
 }
 // A production app may exit before WebView acknowledges the click. Verify the
@@ -71,11 +79,33 @@ try {
   await page.getByRole('alert').filter({hasText:'未保存修改'}).waitFor();
   await page.getByRole('button', {name:'保存配置',exact:true}).click();
   await page.getByRole('status').filter({hasText:'已保存'}).waitFor();
-  assert.match(await readFile(join(fixture,'config.toml'),'utf8'), /model_provider = "custom"/);
-  assert.equal(JSON.parse(await readFile(join(fixture,'auth.json'),'utf8')).OPENAI_API_KEY,'example-key');
+  assert.match(await readFile(join(fixture,'codex','config.toml'),'utf8'), /model_provider = "custom"/);
+  assert.equal(JSON.parse(await readFile(join(fixture,'codex','auth.json'),'utf8')).OPENAI_API_KEY,'example-key');
   await mkdir('.impeccable/review',{recursive:true});
   await page.screenshot({path:'.impeccable/review/native-windows.png'});
-  await writeFile(join(fixture,'.env'),'EXAMPLE=external\n');
+  // Claude 的无 /v1 地址必须走自己的校验，不能覆盖 Codex 兼容字段。
+  const codexConfig = await readFile(join(fixture, 'codex', 'config.toml'), 'utf8');
+  const codexAuth = await readFile(join(fixture, 'codex', 'auth.json'), 'utf8');
+  await page.getByRole('button', {name:'Claude',exact:true}).click();
+  await page.getByText('配置未修改', {exact:true}).waitFor();
+  await page.getByRole('tab', {name:'自定义 API',exact:true}).click();
+  await page.getByRole('button', {name:'添加',exact:true}).click();
+  for (const [label, value] of Object.entries({'配置名称':'example Claude', 'API 地址':'https://claude.example.com', 'API Key':'example-claude-key', '模型':'example-claude-model'})) {
+    await page.getByLabel(label, {exact:true}).fill(value);
+  }
+  await page.getByRole('button', {name:'保存配置',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'已保存'}).waitFor();
+  assert.equal(await page.getByLabel('API 地址', {exact:true}).inputValue(), 'https://claude.example.com');
+  await page.getByText('配置未修改', {exact:true}).waitFor();
+  const claudeSettings = JSON.parse(await readFile(join(fixture, 'claude', 'settings.json'), 'utf8'));
+  assert.equal(claudeSettings.env.ANTHROPIC_BASE_URL, 'https://claude.example.com');
+  assert.equal(claudeSettings.env.ANTHROPIC_AUTH_TOKEN, 'example-claude-key');
+  assert.equal(await readFile(join(fixture, 'codex', 'config.toml'), 'utf8'), codexConfig);
+  assert.equal(await readFile(join(fixture, 'codex', 'auth.json'), 'utf8'), codexAuth);
+  await page.getByRole('button', {name:'Codex',exact:true}).click();
+  assert.equal(await page.getByLabel('API 地址', {exact:true}).inputValue(), 'https://api.example.com/v1');
+  await page.getByText('配置未修改', {exact:true}).waitFor();
+  await writeFile(join(fixture,'codex','.env'),'EXAMPLE=external\n');
   await page.getByLabel('配置名称').fill('example retained draft');
   await page.getByRole('button', {name:'保存配置',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'其他程序修改'}).waitFor();

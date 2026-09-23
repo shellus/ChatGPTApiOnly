@@ -22,6 +22,14 @@ type Confirmation = {
 const clone = <T,>(v: T): T => structuredClone(v);
 const same = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
+const displayAgent = (draft: Draft, agent: "codex" | "claude"): Draft => {
+  const next = clone(draft);
+  const selected = next[agent];
+  next.mode = selected.mode;
+  next.library = selected.library;
+  next.custom_fields = selected.custom_fields;
+  return next;
+};
 
 export default function App() {
   const [saved, setSaved] = useState<View>();
@@ -35,7 +43,7 @@ export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
-  const dirty = !!draft && !!saved && !same(draft, saved.draft);
+  const dirty = !!draft && !!saved && !same(materialize(), saved.draft);
   const closeRef = useRef<() => void>(() => {});
   const perform = async (label: string, operation: () => Promise<void>) => {
     setBusy(label);
@@ -52,23 +60,20 @@ export default function App() {
   };
   const install = (view: View) => {
     setSaved(view);
-    setDraft(clone(view.draft));
+    setDraft(displayAgent(view.draft, agent));
   };
-  const materialize = () => {
+  function materialize() {
     if (!draft) return draft;
     const next = clone(draft);
     next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
-    return next;
-  };
+    // IPC 顶层兼容字段始终属于 Codex，不能携带当前 Claude 表单。
+    return displayAgent(next, "codex");
+  }
   const switchAgent = (nextAgent: "codex" | "claude") => {
     if (!draft || nextAgent === agent) return;
     const next = clone(draft);
     next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
-    const selected = next[nextAgent];
-    next.mode = selected.mode;
-    next.library = selected.library;
-    next.custom_fields = selected.custom_fields;
-    setDraft(next);
+    setDraft(displayAgent(next, nextAgent));
     setAgent(nextAgent);
   };
   const reload = () =>
@@ -197,7 +202,7 @@ export default function App() {
     });
   const save = () =>
     perform("保存配置", async () => {
-      install(await invoke<View>("save", { revision: saved!.revision, draft: materialize() }));
+      install(await invoke<View>("save", { revision: saved!.revision, draft: materialize(), agent }));
       setMessage("已保存配置；尚未启动客户端。");
     });
   const launch = () => {

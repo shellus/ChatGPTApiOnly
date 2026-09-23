@@ -33,7 +33,11 @@ async function fixture(page: Page) {
     };
     let view = {
       revision: "example-revision",
-      draft,
+      draft: {
+        ...draft,
+        codex: { agent: "codex", ...structuredClone(draft) },
+        claude: { agent: "claude", ...structuredClone(draft) },
+      },
       config_dir: "example-fixture",
     };
     const win = window as unknown as Record<string, any>;
@@ -83,6 +87,28 @@ const calls = (page: Page, command: string) =>
     (c) => (window as any).calls.filter((x: any) => x.command === c).length,
     command,
   );
+
+test("Claude save keeps Codex payload separate and restores the active form", async ({ page }) => {
+  await fixture(page);
+  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "自定义 API", exact: true }).click();
+  await page.getByLabel("API 地址", { exact: true }).fill("https://claude.example.com");
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("已保存");
+  await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://claude.example.com");
+  await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
+  const payload = await page.evaluate(() => (window as any).calls.find((c: any) => c.command === "save").args.draft);
+  expect(payload.mode).toBe("official");
+  expect(payload.custom_fields["example-api"].base_url).toBe("https://api.example.com/v1");
+  expect(payload.claude.custom_fields["example-api"].base_url).toBe("https://claude.example.com");
+  await page.getByRole("button", { name: "启动", exact: true }).click();
+  expect(await calls(page, "launch")).toBe(1);
+  await page.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://claude.example.com");
+});
 
 test("opens settings; save and keyboard never start client; dirty launch blocked", async ({
   page,
