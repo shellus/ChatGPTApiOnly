@@ -146,12 +146,7 @@ fn capture_official(
     active: Mode,
 ) -> Result<()> {
     if !valid_tokens(credentials) {
-        if credentials["claudeAiOauth"]
-            .as_object()
-            .is_some_and(|o| !o.is_empty())
-        {
-            bail!("Claude 官方凭据不完整；未视为退出登录，也未覆盖配置库")
-        }
+        // 空字段或过期字段表示已退出登录；读取配置不能因此失败。
         if active == Mode::Official {
             let selected = library.selected_official.clone();
             if let Some(p) = library
