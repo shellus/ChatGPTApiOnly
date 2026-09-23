@@ -206,7 +206,7 @@ export default function App() {
       return;
     }
     void perform("启动客户端", async () => {
-      await invoke("launch", { revision: saved!.revision, draft: materialize() });
+      await invoke("launch", { revision: saved!.revision, draft: materialize(), agent });
     });
   };
   const repair = () =>
@@ -505,7 +505,7 @@ export default function App() {
               disabled={!!busy}
               onClick={() =>
                 void perform("打开下载页面", async () => {
-                  await invoke("open_download", { updates: false });
+                  await invoke("open_download", { updates: false, agent });
                 })
               }
             >
@@ -518,7 +518,7 @@ export default function App() {
               disabled={!!busy}
               onClick={() =>
                 void perform("检查更新", async () => {
-                  await invoke("open_download", { updates: true });
+                  await invoke("open_download", { updates: true, agent });
                 })
               }
             >

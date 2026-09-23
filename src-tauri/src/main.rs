@@ -44,7 +44,9 @@ fn launch(
     state: tauri::State<State>,
     revision: String,
     draft: Draft,
+    agent: String,
 ) -> Result<(), String> {
+    let agent = agent.parse::<Agent>().map_err(|e| e.to_string())?;
     let guard = state
         .session
         .try_lock()
@@ -52,7 +54,7 @@ fn launch(
     let settings = guard
         .as_ref()
         .ok_or("请先读取配置")?
-        .launch_settings_for(&revision, &draft, Agent::Codex)
+        .launch_settings_for(&revision, &draft, agent)
         .map_err(|e| failure(&state, "启动校验", format!("{e:#}")))?;
     launcher_core::launch::launch_desktop(settings)
         .map_err(|e| failure(&state, "启动客户端", format!("{e:#}")))?;
@@ -84,8 +86,9 @@ fn close(app: tauri::AppHandle) {
     app.exit(0);
 }
 #[tauri::command]
-fn open_download(updates: bool) -> Result<(), String> {
-    launcher_core::launch::open_download(Agent::Codex, updates).map_err(|e| format!("{e:#}"))
+fn open_download(updates: bool, agent: String) -> Result<(), String> {
+    let agent = agent.parse::<Agent>().map_err(|e| e.to_string())?;
+    launcher_core::launch::open_download(agent, updates).map_err(|e| format!("{e:#}"))
 }
 
 /// 显示器可能在两次打开之间被拔掉或重新排列；窗口中心不落在任何显示器上时
