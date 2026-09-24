@@ -9,3 +9,5 @@ acs-gui.exe
 acs.exe
 .env
 /src-tauri/gen/
+/release/
+/ci-exe/
