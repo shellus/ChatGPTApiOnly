@@ -6,15 +6,15 @@ import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 
 // The production binary runs against an isolated fixture; no test command is compiled into it.
-const fixture = await mkdtemp(join(tmpdir(), 'chatgpt-api-only-example-'));
+const fixture = await mkdtemp(join(tmpdir(), 'acs-example-'));
 const port = 19227;
-const executable = resolve(process.argv[2] ?? 'target/release/ChatGPTApiOnly.exe');
+const executable = resolve(process.argv[2] ?? 'target/release/acs-gui.exe');
 const windowState = join(fixture, 'acs', 'window.json');
 let child, browser;
 
 async function open() {
   child = spawn(executable, [], { windowsHide: true, env: {
-    ...process.env, CHATGPT_API_ONLY_CONFIG_DIR: fixture,
+    ...process.env,
     ACS_HOME: join(fixture, 'acs'),
     CODEX_HOME: join(fixture, 'codex'),
     CLAUDE_CONFIG_DIR: join(fixture, 'claude'),
@@ -86,7 +86,7 @@ try {
   // Claude 的无 /v1 地址必须走自己的校验，不能覆盖 Codex 兼容字段。
   const codexConfig = await readFile(join(fixture, 'codex', 'config.toml'), 'utf8');
   const codexAuth = await readFile(join(fixture, 'codex', 'auth.json'), 'utf8');
-  await page.getByRole('button', {name:'Claude',exact:true}).click();
+  await page.getByRole('tab', {name:'Claude',exact:true}).click();
   await page.getByText('配置未修改', {exact:true}).waitFor();
   await page.getByRole('tab', {name:'自定义 API',exact:true}).click();
   await page.getByRole('button', {name:'添加',exact:true}).click();
@@ -102,7 +102,7 @@ try {
   assert.equal(claudeSettings.env.ANTHROPIC_AUTH_TOKEN, 'example-claude-key');
   assert.equal(await readFile(join(fixture, 'codex', 'config.toml'), 'utf8'), codexConfig);
   assert.equal(await readFile(join(fixture, 'codex', 'auth.json'), 'utf8'), codexAuth);
-  await page.getByRole('button', {name:'Codex',exact:true}).click();
+  await page.getByRole('tab', {name:'Codex',exact:true}).click();
   assert.equal(await page.getByLabel('API 地址', {exact:true}).inputValue(), 'https://api.example.com/v1');
   await page.getByText('配置未修改', {exact:true}).waitFor();
   await writeFile(join(fixture,'codex','.env'),'EXAMPLE=external\n');
@@ -118,7 +118,7 @@ try {
 
   // 退出时记住窗口几何，下次打开按记住的尺寸还原，而不是回到配置里的默认值。
   const saved = JSON.parse(await readFile(windowState,'utf8'));
-  near([saved.width, saved.height], [700, 640], '退出未记录默认窗口尺寸');
+  near([saved.width, saved.height], [700, 720], '退出未记录默认窗口尺寸');
   await writeFile(windowState, JSON.stringify({...saved, width: 900, height: 660}));
   const restored = await open();
   await sized(restored, [900, 660], '窗口未按记住的尺寸还原');

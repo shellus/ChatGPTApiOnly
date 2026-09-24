@@ -125,21 +125,12 @@ pub struct Draft {
     pub codex: AgentDraft,
     #[serde(default)]
     pub claude: AgentDraft,
-    /// 旧版 Codex 单客户端 API 的兼容字段。
-    #[serde(default)]
-    pub mode: Mode,
-    #[serde(default)]
-    pub library: Library,
-    #[serde(default)]
-    pub custom_fields: BTreeMap<String, CustomFields>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct View {
     pub revision: String,
     pub draft: Draft,
     pub roots: Roots,
-    /// 兼容旧版 GUI 的 Codex 配置目录字段。
-    pub config_dir: String,
 }
 pub struct Session {
     pub store: Store,
@@ -309,18 +300,6 @@ impl AgentDraft {
     }
 }
 impl Draft {
-    pub fn add(&mut self, mode: Mode, name: &str, copy: Option<&str>) -> Result<String> {
-        let id = self.codex.add(mode, name, copy)?;
-        self.library = self.codex.library.clone();
-        self.custom_fields = self.codex.custom_fields.clone();
-        Ok(id)
-    }
-    pub fn delete(&mut self, mode: Mode, id: &str) -> Result<()> {
-        self.codex.delete(mode, id)?;
-        self.library = self.codex.library.clone();
-        self.custom_fields = self.codex.custom_fields.clone();
-        Ok(())
-    }
     pub fn agent(&self, agent: Agent) -> &AgentDraft {
         match agent {
             Agent::Codex => &self.codex,
@@ -374,13 +353,7 @@ impl Session {
         let libraries = libraries(&store, &baseline)?;
         let codex = codex::capture(libraries.codex, &baseline)?;
         let claude = claude::capture(libraries.claude, &baseline)?;
-        let original = Draft {
-            mode: codex.mode,
-            library: codex.library.clone(),
-            custom_fields: codex.custom_fields.clone(),
-            codex,
-            claude,
-        };
+        let original = Draft { codex, claude };
         Ok(Self {
             store,
             baseline,
@@ -392,7 +365,6 @@ impl Session {
             revision: revision(&self.baseline),
             draft: self.original.clone(),
             roots: self.store.roots.clone(),
-            config_dir: self.store.roots.codex.to_string_lossy().into(),
         }
     }
     pub fn check(&self, rev: &str) -> Result<()> {
@@ -411,16 +383,6 @@ impl Session {
         let _lock = self.store.lock()?;
         self.check(rev)?;
         let mut draft = draft.clone();
-        // 兼容旧版调用方直接编辑 Draft 顶层字段的行为。
-        if draft.codex.mode == self.original.codex.mode
-            && (draft.mode != self.original.mode
-                || draft.library != self.original.library
-                || draft.custom_fields != self.original.custom_fields)
-        {
-            draft.codex.mode = draft.mode;
-            draft.codex.library = draft.library.clone();
-            draft.codex.custom_fields = draft.custom_fields.clone();
-        }
         let mut after = self.baseline.clone();
         let codex_changed = draft.codex != self.original.codex;
         let claude_changed = draft.claude != self.original.claude;
@@ -437,9 +399,6 @@ impl Session {
         })?);
         self.store.commit(&self.baseline, &after)?;
         self.baseline = after;
-        draft.mode = draft.codex.mode;
-        draft.library = draft.codex.library.clone();
-        draft.custom_fields = draft.codex.custom_fields.clone();
         self.original = draft;
         Ok(self.view())
     }
@@ -472,7 +431,6 @@ impl Session {
                     .unwrap_or_default(),
             )?,
             roots: self.store.roots.clone(),
-            config_dir: self.store.roots.codex.clone(),
         })
     }
 }

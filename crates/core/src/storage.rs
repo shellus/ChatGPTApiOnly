@@ -82,27 +82,13 @@ impl Roots {
         }
     }
 }
-impl From<PathBuf> for Roots {
-    fn from(codex: PathBuf) -> Self {
-        Self {
-            acs: codex.join("launcher-profiles"),
-            codex: codex.clone(),
-            claude: codex.join("claude"),
-            claude_json: codex.join("claude.json"),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Store {
     pub roots: Roots,
-    /// 兼容旧版核心 API；历史数据均位于 Codex 根目录。
-    pub root: PathBuf,
 }
 impl Store {
-    pub fn new<R: Into<Roots>>(roots: R) -> Self {
-        let roots = roots.into();
-        Self { root: roots.codex.clone(), roots }
+    pub fn new(roots: Roots) -> Self {
+        Self { roots }
     }
     pub fn discover() -> Result<Self> {
         Ok(Self::new(Roots::discover()?))
@@ -278,8 +264,8 @@ fn object(path: &Path) -> Result<Value> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Value::Object(Default::default()));
     }
-    let value: Value = serde_json::from_slice(&bytes)
-        .with_context(|| format!("{} 格式无效", path.display()))?;
+    let value: Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("{} 格式无效", path.display()))?;
     if !value.is_object() {
         bail!("{} 必须是 JSON 对象", path.display())
     }
@@ -399,7 +385,10 @@ mod tests {
         write_target(&target, Some(br#"{"emailAddress":"example@example.com"}"#)).unwrap();
         let stored: Value = serde_json::from_slice(&read(&target.path).unwrap().unwrap()).unwrap();
         assert_eq!(stored["projects"]["a"], 1);
-        assert_eq!(stored["oauthAccount"]["emailAddress"], "example@example.com");
+        assert_eq!(
+            stored["oauthAccount"]["emailAddress"],
+            "example@example.com"
+        );
         write_target(&target, None).unwrap();
         assert_eq!(read_target(&target).unwrap(), None);
         assert!(read(&target.path).unwrap().is_some());

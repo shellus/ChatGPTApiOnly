@@ -3,6 +3,50 @@
 version = 4
 
 [[package]]
+name = "acs"
+version = "3.0.0"
+dependencies = [
+ "acs-core",
+ "anyhow",
+ "clap",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "acs-core"
+version = "3.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "dirs",
+ "filetime",
+ "fs2",
+ "open",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml_edit 0.22.27",
+ "url",
+ "uuid",
+ "walkdir",
+ "winreg",
+]
+
+[[package]]
+name = "acs-gui"
+version = "3.0.0"
+dependencies = [
+ "acs-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -376,28 +420,6 @@ name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
-
-[[package]]
-name = "chatgpt-api-only"
-version = "2.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "launcher-core",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "chatgpt-api-only-desktop"
-version = "2.0.0"
-dependencies = [
- "launcher-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
 
 [[package]]
 name = "chrono"
@@ -1884,28 +1906,6 @@ dependencies = [
  "bitflags 2.13.2",
  "serde",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "launcher-core"
-version = "2.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "dirs",
- "filetime",
- "fs2",
- "open",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml_edit 0.22.27",
- "url",
- "uuid",
- "walkdir",
- "winreg",
 ]
 
 [[package]]

@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ChatGPT API Only",
-  "version": "2.0.0",
-  "identifier": "io.github.shellus.chatgpt-api-only",
+  "productName": "acs",
+  "mainBinaryName": "acs-gui",
+  "version": "3.0.0",
+  "identifier": "io.github.shellus.acs",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,11 +14,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "ChatGPT API Only",
+        "title": "acs",
         "width": 700,
-        "height": 640,
+        "height": 720,
         "minWidth": 600,
-        "minHeight": 580
+        "minHeight": 620
       }
     ],
     "security": {

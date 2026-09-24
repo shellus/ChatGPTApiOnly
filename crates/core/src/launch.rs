@@ -22,8 +22,6 @@ pub struct Settings {
     pub mode: Mode,
     pub proxy: String,
     pub roots: Roots,
-    /// 兼容旧版调用方；等同于 `roots.codex`。
-    pub config_dir: PathBuf,
 }
 #[derive(Debug, Serialize)]
 pub struct Plan {

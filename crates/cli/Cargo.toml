@@ -1,11 +1,15 @@
 [package]
-name = "chatgpt-api-only"
+name = "acs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "acs"
+path = "src/main.rs"
+
 [dependencies]
-launcher-core = { path = "../core" }
+acs-core = { path = "../core" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }

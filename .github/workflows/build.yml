@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  VERSION: 3.0.0
+
 jobs:
   verify:
     strategy:
@@ -29,18 +32,18 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo fmt --all -- --check
-      - run: cargo clippy -p launcher-core -p chatgpt-api-only --all-targets -- -D warnings
-      - run: cargo test -p launcher-core -p chatgpt-api-only --locked
+      - run: cargo clippy -p acs-core -p acs --all-targets -- -D warnings
+      - run: cargo test -p acs-core -p acs --locked
       - if: runner.os != 'Linux'
-        run: cargo build -p chatgpt-api-only --release --locked
+        run: cargo build -p acs --release --locked
       - name: Build standalone Linux CLI
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
           rustup target add x86_64-unknown-linux-musl
-          cargo build -p chatgpt-api-only --release --locked --target x86_64-unknown-linux-musl
-          target/x86_64-unknown-linux-musl/release/chatgpt-api-only --config-dir "$(mktemp -d)" list
+          cargo build -p acs --release --locked --target x86_64-unknown-linux-musl
+          target/x86_64-unknown-linux-musl/release/acs --root "$(mktemp -d)" ls
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - if: runner.os == 'Linux'
@@ -54,24 +57,24 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Compress-Archive -LiteralPath target/release/ChatGPTApiOnly.exe -DestinationPath release/ChatGPTApiOnly-2.0.0-windows-x64.zip
-          Copy-Item target/release/chatgpt-api-only.exe release/chatgpt-api-only-windows-x64.exe
-          Copy-Item target/release/bundle/nsis/*setup.exe release/
-          Expand-Archive release/ChatGPTApiOnly-2.0.0-windows-x64.zip release/check
-          if ((Get-FileHash release/check/ChatGPTApiOnly.exe).Hash -ne (Get-FileHash target/release/ChatGPTApiOnly.exe).Hash) { throw 'ZIP executable mismatch' }
-          Remove-Item -LiteralPath release/check/ChatGPTApiOnly.exe
+          Compress-Archive -LiteralPath target/release/acs-gui.exe -DestinationPath "release/acs-$env:VERSION-windows-x64.zip"
+          Copy-Item target/release/acs.exe "release/acs-cli-$env:VERSION-windows-x64.exe"
+          Copy-Item target/release/bundle/nsis/*setup.exe "release/acs-$env:VERSION-windows-x64-setup.exe"
+          Expand-Archive "release/acs-$env:VERSION-windows-x64.zip" release/check
+          if ((Get-FileHash release/check/acs-gui.exe).Hash -ne (Get-FileHash target/release/acs-gui.exe).Hash) { throw 'ZIP executable mismatch' }
+          Remove-Item -LiteralPath release/check/acs-gui.exe
           Remove-Item -LiteralPath release/check
       - name: Package Linux
         if: runner.os == 'Linux'
         run: |
           mkdir -p release
-          tar -czf release/chatgpt-api-only-2.0.0-linux-x64.tar.gz -C target/x86_64-unknown-linux-musl/release chatgpt-api-only
+          tar -czf "release/acs-cli-$VERSION-linux-x64.tar.gz" -C target/x86_64-unknown-linux-musl/release acs
       - name: Package macOS
         if: runner.os == 'macOS'
         run: |
           mkdir -p release
-          ditto -c -k --sequesterRsrc --keepParent 'target/release/bundle/macos/ChatGPT API Only.app' "release/ChatGPTApiOnly-2.0.0-macos-$(uname -m).zip"
-          tar -czf "release/chatgpt-api-only-2.0.0-macos-$(uname -m).tar.gz" -C target/release chatgpt-api-only
+          ditto -c -k --sequesterRsrc --keepParent 'target/release/bundle/macos/acs.app' "release/acs-$VERSION-macos-$(uname -m).zip"
+          tar -czf "release/acs-cli-$VERSION-macos-$(uname -m).tar.gz" -C target/release acs
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ runner.os }}-${{ runner.arch }}

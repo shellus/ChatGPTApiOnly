@@ -103,7 +103,9 @@ pub fn capture(mut library: Library, baseline: &Snapshot) -> Result<AgentDraft> 
     let settings = json(&baseline[CLAUDE_SETTINGS], "settings.json")?;
     let credentials = json(&baseline[CLAUDE_CREDENTIALS], ".credentials.json")?;
     let account = match &baseline[CLAUDE_ACCOUNT] {
-        Some(bytes) => serde_json::from_slice(bytes).context(".claude.json 的 oauthAccount 无效")?,
+        Some(bytes) => {
+            serde_json::from_slice(bytes).context(".claude.json 的 oauthAccount 无效")?
+        }
         None => Value::Null,
     };
     let active = active_mode(&settings);

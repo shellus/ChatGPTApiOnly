@@ -1,4 +1,5 @@
 export type Mode = "official" | "custom";
+export type Agent = "codex" | "claude";
 export interface Profile {
   id: string;
   name: string | null;
@@ -9,6 +10,7 @@ export interface Profile {
   custom_key?: string | null;
   custom_model?: string | null;
   custom_effort?: string | null;
+  custom_base_url?: string | null;
   model_providers_toml?: string | null;
 }
 export interface Fields {
@@ -27,24 +29,20 @@ export interface Library {
   official_model?: string | null;
   official_effort?: string | null;
 }
-export interface Draft {
-  codex: AgentDraft;
-  claude: AgentDraft;
+export interface AgentDraft {
+  agent: Agent;
   mode: Mode;
   library: Library;
   custom_fields: Record<string, Fields>;
 }
-export interface AgentDraft {
-  agent: "codex" | "claude";
-  mode: Mode;
-  library: Library;
-  custom_fields: Record<string, Fields>;
+export interface Draft {
+  codex: AgentDraft;
+  claude: AgentDraft;
 }
 export interface View {
   revision: string;
   draft: Draft;
-  config_dir: string;
-  roots?: { acs: string; codex: string; claude: string; claude_json: string };
+  roots: { acs: string; codex: string; claude: string; claude_json: string };
 }
 export interface Progress {
   phase: string;

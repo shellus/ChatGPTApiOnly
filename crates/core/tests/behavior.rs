@@ -1,21 +1,24 @@
-use launcher_core::{
+use acs_core::{
     config::{normalize_proxy, proxy_env},
-    history, CustomFields, Mode, Session, Store, WindowState,
+    history, Agent, CustomFields, Mode, Roots, Session, Store, WindowState,
 };
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::{cell::RefCell, fs};
+use std::{cell::RefCell, fs, path::Path};
 
 fn fixture() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::new(dir.path().to_owned());
+    let store = Store::new(Roots::under(dir.path()));
+    for path in [&store.roots.codex, &store.roots.claude] {
+        fs::create_dir_all(path).unwrap();
+    }
     (dir, store)
 }
 fn custom(session: &mut Session) -> String {
     let mut draft = session.original.clone();
-    draft.mode = Mode::Custom;
-    let id = draft.add(Mode::Custom, "example API", None).unwrap();
-    draft.custom_fields.insert(
+    draft.codex.mode = Mode::Custom;
+    let id = draft.codex.add(Mode::Custom, "example API", None).unwrap();
+    draft.codex.custom_fields.insert(
         id.clone(),
         CustomFields {
             provider_name: "example provider".into(),
@@ -30,8 +33,11 @@ fn custom(session: &mut Session) -> String {
 }
 fn official(session: &mut Session) -> String {
     let mut draft = session.original.clone();
-    draft.mode = Mode::Official;
-    let id = draft.add(Mode::Official, "example account", None).unwrap();
+    draft.codex.mode = Mode::Official;
+    let id = draft
+        .codex
+        .add(Mode::Official, "example account", None)
+        .unwrap();
     session.save(&session.view().revision, &draft).unwrap();
     id
 }
@@ -39,16 +45,16 @@ fn credentials() -> Value {
     json!({"auth_mode":"chatgpt","tokens":{"access_token":"example-access","refresh_token":"example-refresh","account_id":"example-account","id_token":"example-id"}})
 }
 fn read(store: &Store, path: &str) -> String {
-    fs::read_to_string(store.root.join(path)).unwrap()
+    fs::read_to_string(store.roots.codex.join(path)).unwrap()
 }
 fn seed_rollout(store: &Store) -> String {
-    fs::create_dir_all(store.root.join("sessions")).unwrap();
+    fs::create_dir_all(store.roots.codex.join("sessions")).unwrap();
     let input = "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"old\",\"name\":\"example\"}}\r\n{\"type\":\"event_msg\",\"payload\":\"example\"}\n";
-    fs::write(store.root.join("sessions/example.jsonl"), input).unwrap();
+    fs::write(store.roots.codex.join("sessions/example.jsonl"), input).unwrap();
     input.into()
 }
 fn database(store: &Store, filename: &str, fail: bool) -> Connection {
-    let path = store.root.join(filename);
+    let path = store.roots.codex.join(filename);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let db = Connection::open(path).unwrap();
     db.execute_batch("CREATE TABLE threads (model_provider TEXT); INSERT INTO threads VALUES ('old'),(NULL); CREATE TABLE local_thread_catalog (model_provider TEXT); INSERT INTO local_thread_catalog VALUES ('old');").unwrap();
@@ -63,8 +69,8 @@ fn saving_claude_preserves_invalid_unchanged_codex() {
     let (_dir, store) = fixture();
     let config = "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://codex.example.com\"\n";
     let auth = "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"example-codex-key\"}";
-    fs::write(store.root.join("config.toml"), config).unwrap();
-    fs::write(store.root.join("auth.json"), auth).unwrap();
+    fs::write(store.roots.codex.join("config.toml"), config).unwrap();
+    fs::write(store.roots.codex.join("auth.json"), auth).unwrap();
     let mut session = Session::open(store.clone()).unwrap();
     let mut draft = session.original.clone();
     draft.claude.mode = Mode::Custom;
@@ -82,33 +88,28 @@ fn saving_claude_preserves_invalid_unchanged_codex() {
         },
     );
     session
-        .save_for(
-            &session.view().revision,
-            &draft,
-            launcher_core::Agent::Claude,
-        )
+        .save_for(&session.view().revision, &draft, Agent::Claude)
         .unwrap();
     session
         .save_for(
             &session.view().revision,
             &session.original.clone(),
-            launcher_core::Agent::Claude,
+            Agent::Claude,
         )
         .unwrap();
     assert_eq!(read(&store, "config.toml"), config);
     assert_eq!(read(&store, "auth.json"), auth);
-    assert!(!store.root.join(".env").exists());
-    let settings: Value = serde_json::from_str(&read(&store, "claude/settings.json")).unwrap();
+    assert!(!store.roots.codex.join(".env").exists());
+    let settings: Value = serde_json::from_str(
+        &fs::read_to_string(store.roots.claude.join("settings.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         settings["env"]["ANTHROPIC_BASE_URL"],
         "https://claude.example.com"
     );
     session
-        .launch_settings_for(
-            &session.view().revision,
-            &session.original,
-            launcher_core::Agent::Claude,
-        )
+        .launch_settings_for(&session.view().revision, &session.original, Agent::Claude)
         .unwrap();
 }
 
@@ -118,10 +119,10 @@ fn opening_and_drafts_do_not_write() {
     let session = Session::open(store.clone()).unwrap();
     let before = store.snapshot().unwrap();
     let mut draft = session.original.clone();
-    let id = draft.add(Mode::Custom, "example", None).unwrap();
-    draft.delete(Mode::Custom, &id).unwrap();
+    let id = draft.codex.add(Mode::Custom, "example", None).unwrap();
+    draft.codex.delete(Mode::Custom, &id).unwrap();
     assert_eq!(before, store.snapshot().unwrap());
-    assert!(!store.root.join("launcher-profiles").exists());
+    assert!(!store.roots.acs.exists());
 }
 #[test]
 fn saves_never_repair_and_launch_never_saves() {
@@ -135,22 +136,28 @@ fn saves_never_repair_and_launch_never_saves() {
     assert_eq!(settings.mode, Mode::Custom);
     assert_eq!(before, store.snapshot().unwrap());
     let mut dirty = s.original.clone();
-    dirty.library.custom_providers[0].name = Some("changed".into());
+    dirty.codex.library.custom_providers[0].name = Some("changed".into());
     assert!(s.launch_settings(&s.view().revision, &dirty).is_err());
     assert_eq!(before, store.snapshot().unwrap());
 }
 #[test]
 fn each_external_file_change_blocks_save_and_launch() {
-    for path in [
-        "config.toml",
-        "auth.json",
-        "launcher-profiles/profiles.json",
-        ".env",
-    ] {
+    let cases = [
+        ("codex", "config.toml"),
+        ("codex", "auth.json"),
+        ("acs", "profiles.json"),
+        ("codex", ".env"),
+    ];
+    for (root, path) in cases {
         let (_dir, store) = fixture();
         let mut s = Session::open(store.clone()).unwrap();
         custom(&mut s);
-        fs::write(store.root.join(path), "example external change").unwrap();
+        let base = if root == "codex" {
+            &store.roots.codex
+        } else {
+            &store.roots.acs
+        };
+        fs::write(base.join(path), "example external change").unwrap();
         let before = store.snapshot().unwrap();
         assert!(s.save(&s.view().revision, &s.original.clone()).is_err());
         assert!(s.launch_settings(&s.view().revision, &s.original).is_err());
@@ -162,7 +169,11 @@ fn launch_does_not_recover_missing_active_key_from_profile() {
     let (_dir, store) = fixture();
     let mut s = Session::open(store.clone()).unwrap();
     custom(&mut s);
-    fs::write(store.root.join("auth.json"), r#"{"auth_mode":"apikey"}"#).unwrap();
+    fs::write(
+        store.roots.codex.join("auth.json"),
+        r#"{"auth_mode":"apikey"}"#,
+    )
+    .unwrap();
     let s = Session::open(store).unwrap();
     assert!(s.launch_settings(&s.view().revision, &s.original).is_err());
 }
@@ -172,7 +183,11 @@ fn provider_snapshot_roundtrip_preserves_nested_unknown_values() {
     let mut s = Session::open(store.clone()).unwrap();
     let id = custom(&mut s);
     let mut draft = s.original.clone();
-    draft.library.custom_providers[0].model_providers_toml.as_mut().unwrap().push_str("\n[model_providers.custom.http_headers]\n\"X-Example\" = \"test\"\n[model_providers.other]\nname='example other'\nbase_url='https://other.example.com/v1'\n");
+    draft.codex.library.custom_providers[0]
+        .model_providers_toml
+        .as_mut()
+        .unwrap()
+        .push_str("\n[model_providers.custom.http_headers]\n\"X-Example\" = \"test\"\n[model_providers.other]\nname='example other'\nbase_url='https://other.example.com/v1'\n");
     s.save(&s.view().revision, &draft).unwrap();
     let original = read(&store, "config.toml");
     official(&mut s);
@@ -182,8 +197,8 @@ fn provider_snapshot_roundtrip_preserves_nested_unknown_values() {
     assert!(!clean.contains("X-Example"));
     s.save(&s.view().revision, &s.original.clone()).unwrap();
     let mut draft = s.original.clone();
-    draft.mode = Mode::Custom;
-    draft.library.selected_custom = id;
+    draft.codex.mode = Mode::Custom;
+    draft.codex.library.selected_custom = id;
     s.save(&s.view().revision, &draft).unwrap();
     let restored = read(&store, "config.toml");
     assert!(restored.contains("X-Example"));
@@ -205,26 +220,27 @@ fn auth_refresh_capture_and_logout_do_not_restore_old_tokens() {
     let mut s = Session::open(store.clone()).unwrap();
     official(&mut s);
     fs::write(
-        store.root.join("auth.json"),
+        store.roots.codex.join("auth.json"),
         serde_json::to_vec(&credentials()).unwrap(),
     )
     .unwrap();
     let mut s = Session::open(store.clone()).unwrap();
-    let id = s.original.library.selected_official.clone();
+    let id = s.original.codex.library.selected_official.clone();
     custom(&mut s);
     let mut draft = s.original.clone();
-    draft.mode = Mode::Official;
-    draft.library.selected_official = id.clone();
+    draft.codex.mode = Mode::Official;
+    draft.codex.library.selected_official = id.clone();
     s.save(&s.view().revision, &draft).unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&read(&store, "auth.json")).unwrap()["tokens"]
             ["access_token"],
         "example-access"
     );
-    fs::remove_file(store.root.join("auth.json")).unwrap();
+    fs::remove_file(store.roots.codex.join("auth.json")).unwrap();
     let mut s = Session::open(store.clone()).unwrap();
     assert!(s
         .original
+        .codex
         .library
         .selected(Mode::Official)
         .unwrap()
@@ -239,7 +255,7 @@ fn partial_tokens_block_without_clearing_library() {
     let mut s = Session::open(store.clone()).unwrap();
     official(&mut s);
     fs::write(
-        store.root.join("auth.json"),
+        store.roots.codex.join("auth.json"),
         r#"{"auth_mode":"chatgpt","tokens":{"access_token":"example"}}"#,
     )
     .unwrap();
@@ -252,7 +268,7 @@ fn partial_tokens_block_without_clearing_library() {
 fn imported_official_identity_is_stable_without_writing() {
     let (_dir, store) = fixture();
     fs::write(
-        store.root.join("auth.json"),
+        store.roots.codex.join("auth.json"),
         serde_json::to_vec(&credentials()).unwrap(),
     )
     .unwrap();
@@ -260,8 +276,8 @@ fn imported_official_identity_is_stable_without_writing() {
     let first = Session::open(store.clone()).unwrap();
     let second = Session::open(store.clone()).unwrap();
     assert_eq!(
-        first.original.library.selected_official,
-        second.original.library.selected_official
+        first.original.codex.library.selected_official,
+        second.original.codex.library.selected_official
     );
     assert_eq!(before, store.snapshot().unwrap());
 }
@@ -271,12 +287,12 @@ fn external_api_import_preserves_existing_profile_identity() {
     let mut s = Session::open(store.clone()).unwrap();
     let old_id = custom(&mut s);
     let doc = read(&store, "config.toml").replace("api.example.com", "other.example.com");
-    fs::write(store.root.join("config.toml"), doc).unwrap();
+    fs::write(store.roots.codex.join("config.toml"), doc).unwrap();
     let s = Session::open(store).unwrap();
-    assert_eq!(s.original.library.custom_providers.len(), 2);
-    assert_ne!(s.original.library.selected_custom, old_id);
+    assert_eq!(s.original.codex.library.custom_providers.len(), 2);
+    assert_ne!(s.original.codex.library.selected_custom, old_id);
     assert_eq!(
-        s.original.custom_fields[&old_id].base_url,
+        s.original.codex.custom_fields[&old_id].base_url,
         "https://api.example.com/v1"
     );
 }
@@ -299,14 +315,14 @@ fn proxy_validation_roundtrip_and_parent_environment_unchanged() {
         );
         assert_eq!(proxy_env(&updated, "").unwrap(), original);
     }
+    // 2.x 的旧标记必须继续被清理，否则遗留代理变量会继续生效。
     assert!(proxy_env("# END CHATGPT API ONLY PROXY\n", "").is_err());
     let env_before: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
-    let settings = launcher_core::launch::Settings {
-        agent: launcher_core::Agent::Codex,
+    let settings = acs_core::launch::Settings {
+        agent: Agent::Codex,
         mode: Mode::Official,
         proxy: "http://127.0.0.1:7890".into(),
-        config_dir: "example".into(),
-        roots: launcher_core::storage::Roots::under(std::path::Path::new("example")),
+        roots: Roots::under(Path::new("example")),
     };
     let plan = settings.plan("example".into(), true, vec![]).unwrap();
     let _command = plan.command();
@@ -321,7 +337,12 @@ fn invalid_proxy_marker_blocks_all_four_file_changes() {
     let (_dir, store) = fixture();
     let mut s = Session::open(store.clone()).unwrap();
     official(&mut s);
-    fs::write(store.root.join(".env"), "# BEGIN CHATGPT API ONLY PROXY\n").unwrap();
+    // 2.x 旧标记若残留且不完整，同样必须阻止写入。
+    fs::write(
+        store.roots.codex.join(".env"),
+        "# BEGIN CHATGPT API ONLY PROXY\n",
+    )
+    .unwrap();
     let mut s = Session::open(store.clone()).unwrap();
     let before = store.snapshot().unwrap();
     assert!(s.save(&s.view().revision, &s.original.clone()).is_err());
@@ -336,10 +357,10 @@ fn conflicting_routing_is_not_silently_removed() {
         "openai_base_url='https://example.com/v1'",
     ] {
         let (_dir, store) = fixture();
-        fs::write(store.root.join("config.toml"), setting).unwrap();
+        fs::write(store.roots.codex.join("config.toml"), setting).unwrap();
         let mut s = Session::open(store.clone()).unwrap();
         let mut draft = s.original.clone();
-        draft.add(Mode::Official, "example", None).unwrap();
+        draft.codex.add(Mode::Official, "example", None).unwrap();
         let before = store.snapshot().unwrap();
         assert!(s.save(&s.view().revision, &draft).is_err());
         assert_eq!(before, store.snapshot().unwrap());
@@ -395,17 +416,22 @@ fn second_database_failure_rolls_back_all_databases_and_rollouts() {
             2
         );
     }
-    assert!(store.root.join("backups_state/provider-sync").exists());
+    assert!(store
+        .roots
+        .codex
+        .join("backups_state/provider-sync")
+        .exists());
 }
 
 #[test]
 fn unrelated_databases_are_not_attached_or_backed_up() {
     let (_dir, store) = fixture();
     let _history = database(&store, "state_5.sqlite", false);
-    fs::create_dir_all(store.root.join("sqlite")).unwrap();
+    fs::create_dir_all(store.roots.codex.join("sqlite")).unwrap();
     let mut unrelated = Vec::new();
     for i in 0..12 {
-        let db = Connection::open(store.root.join(format!("sqlite/example-{i}.db"))).unwrap();
+        let db =
+            Connection::open(store.roots.codex.join(format!("sqlite/example-{i}.db"))).unwrap();
         db.execute_batch("CREATE TABLE settings (value TEXT); INSERT INTO settings VALUES ('example'); BEGIN IMMEDIATE;").unwrap();
         unrelated.push(db);
     }
@@ -424,7 +450,7 @@ fn changing_rollout_aborts_sql_transaction() {
     let result = history::repair(&store, |p| {
         if p.phase == "修复对话" && p.completed == 0 {
             fs::write(
-                store.root.join("sessions/example.jsonl"),
+                store.roots.codex.join("sessions/example.jsonl"),
                 "example external write",
             )
             .unwrap();
@@ -449,12 +475,12 @@ fn changing_rollout_aborts_sql_transaction() {
 fn failed_rollout_after_first_write_restores_first_and_sql() {
     let (_dir, store) = fixture();
     let original = seed_rollout(&store);
-    fs::write(store.root.join("sessions/second.jsonl"), &original).unwrap();
+    fs::write(store.roots.codex.join("sessions/second.jsonl"), &original).unwrap();
     let db = database(&store, "state_5.sqlite", false);
     let result = history::repair(&store, |p| {
         if p.phase == "修复对话" && p.completed == 4 {
             fs::write(
-                store.root.join("sessions/second.jsonl"),
+                store.roots.codex.join("sessions/second.jsonl"),
                 "example external write",
             )
             .unwrap();
@@ -487,6 +513,48 @@ fn window_geometry_persists_without_disturbing_the_saved_file_baseline() {
     };
     store.set_window_state(&state);
     assert_eq!(store.window_state(), Some(state));
-    // 窗口几何不属于四文件基线，记住尺寸不得让已打开的草稿失效。
+    // 窗口几何不属于目标文件基线，记住尺寸不得让已打开的草稿失效。
     session.save(&revision, &session.original.clone()).unwrap();
+}
+
+/// 2.x 的配置库位于 `~/.codex/launcher-profiles/modes.json`；新目录首次打开时
+/// 读取该文件作为初值，保存后自然落到 `~/.acs/profiles.json`，不写回旧位置。
+#[test]
+fn legacy_2x_library_is_migrated_once_into_the_acs_directory() {
+    let (_dir, store) = fixture();
+    let legacy = store.roots.codex.join("launcher-profiles/modes.json");
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(
+        &legacy,
+        serde_json::to_vec(&json!({
+            "official_accounts": [{"id":"example-official","name":"example account"}],
+            "custom_providers": [{"id":"example-api","name":"example API","custom_key":"example-key","custom_model":"example-model"}],
+            "selected_official": "example-official",
+            "selected_custom": "example-api",
+            "custom_key": "stale top level value"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut session = Session::open(store.clone()).unwrap();
+    let codex = &session.original.codex.library;
+    assert_eq!(codex.custom_providers.len(), 1);
+    assert_eq!(codex.custom_providers[0].id, "example-api");
+    assert_eq!(codex.selected_custom, "example-api");
+    // 旧文件顶层残留字段在迁移时清理，不进入新配置库。
+    assert!(codex.extra.is_empty());
+    assert!(session.original.claude.library.custom_providers.is_empty());
+    session
+        .save(&session.view().revision, &session.original.clone())
+        .unwrap();
+    let migrated: Value =
+        serde_json::from_slice(&fs::read(store.roots.acs.join("profiles.json")).unwrap()).unwrap();
+    assert_eq!(
+        migrated["codex"]["custom_providers"][0]["id"],
+        "example-api"
+    );
+    // 迁移只读旧文件，不修改它。
+    assert!(fs::read_to_string(&legacy)
+        .unwrap()
+        .contains("stale top level value"));
 }

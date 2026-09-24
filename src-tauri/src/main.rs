@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use launcher_core::{Agent, Draft, Session, Store, View, WindowState};
+use acs_core::{Agent, Draft, Session, Store, View, WindowState};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -61,7 +61,7 @@ fn launch(
         .ok_or("请先读取配置")?
         .launch_settings_for(&revision, &draft, agent)
         .map_err(|e| failure(&state, "启动校验", format!("{e:#}")))?;
-    launcher_core::launch::launch_desktop(settings)
+    acs_core::launch::launch_desktop(settings)
         .map_err(|e| failure(&state, "启动客户端", format!("{e:#}")))?;
     app.exit(0);
     Ok(())
@@ -70,7 +70,7 @@ fn launch(
 async fn repair(
     app: tauri::AppHandle,
     state: tauri::State<'_, State>,
-) -> Result<launcher_core::history::Report, String> {
+) -> Result<acs_core::history::Report, String> {
     let store = state.store.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<State>();
@@ -78,7 +78,7 @@ async fn repair(
             .session
             .try_lock()
             .map_err(|_| "操作正在执行".to_string())?;
-        launcher_core::history::repair(&store, |progress| {
+        acs_core::history::repair(&store, |progress| {
             let _ = app.emit("repair-progress", progress);
         })
         .map_err(|e| failure(&state, "修复对话", format!("{e:#}")))
@@ -93,7 +93,7 @@ fn close(app: tauri::AppHandle) {
 #[tauri::command]
 fn open_download(updates: bool, agent: String) -> Result<(), String> {
     let agent = agent.parse::<Agent>().map_err(|e| e.to_string())?;
-    launcher_core::launch::open_download(agent, updates).map_err(|e| format!("{e:#}"))
+    acs_core::launch::open_download(agent, updates).map_err(|e| format!("{e:#}"))
 }
 
 /// 显示器可能在两次打开之间被拔掉或重新排列；窗口中心不落在任何显示器上时

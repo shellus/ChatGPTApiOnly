@@ -4,7 +4,7 @@ async function fixture(page: Page) {
     const callbacks = new Map<number, (v: unknown) => void>();
     let n = 0;
     const listeners = new Map<string, number>();
-    const draft = {
+    const agent = {
       mode: "official",
       library: {
         official_accounts: [
@@ -34,11 +34,15 @@ async function fixture(page: Page) {
     let view = {
       revision: "example-revision",
       draft: {
-        ...draft,
-        codex: { agent: "codex", ...structuredClone(draft) },
-        claude: { agent: "claude", ...structuredClone(draft) },
+        codex: { agent: "codex", ...structuredClone(agent) },
+        claude: { agent: "claude", ...structuredClone(agent) },
       },
-      config_dir: "example-fixture",
+      roots: {
+        acs: "/example/acs",
+        codex: "/example/codex",
+        claude: "/example/claude",
+        claude_json: "/example/claude/.claude.json",
+      },
     };
     const win = window as unknown as Record<string, any>;
     win.calls = [];
@@ -88,9 +92,9 @@ const calls = (page: Page, command: string) =>
     command,
   );
 
-test("Claude save keeps Codex payload separate and restores the active form", async ({ page }) => {
+test("Claude edits stay in the Claude draft and survive switching clients", async ({ page }) => {
   await fixture(page);
-  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  await page.getByRole("tab", { name: "Claude", exact: true }).click();
   await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "自定义 API", exact: true }).click();
   await page.getByLabel("API 地址", { exact: true }).fill("https://claude.example.com");
@@ -99,15 +103,40 @@ test("Claude save keeps Codex payload separate and restores the active form", as
   await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://claude.example.com");
   await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
   const payload = await page.evaluate(() => (window as any).calls.find((c: any) => c.command === "save").args.draft);
-  expect(payload.mode).toBe("official");
-  expect(payload.custom_fields["example-api"].base_url).toBe("https://api.example.com/v1");
+  expect(payload.codex.custom_fields["example-api"].base_url).toBe("https://api.example.com/v1");
   expect(payload.claude.custom_fields["example-api"].base_url).toBe("https://claude.example.com");
   await page.getByRole("button", { name: "启动", exact: true }).click();
   expect(await calls(page, "launch")).toBe(1);
-  await page.getByRole("button", { name: "Codex", exact: true }).click();
+  await page.getByRole("tab", { name: "Codex", exact: true }).click();
+  // 客户端各自记住自己的模式：Codex 仍是官方账号，Claude 的自定义 API 不受影响。
+  await expect(page.getByRole("tab", { name: "官方账号", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("配置未修改", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  await page.getByRole("tab", { name: "自定义 API", exact: true }).click();
+  await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://api.example.com/v1");
+  await page.getByRole("tab", { name: "Claude", exact: true }).click();
   await expect(page.getByLabel("API 地址", { exact: true })).toHaveValue("https://claude.example.com");
+});
+
+test("switching clients keeps both drafts and reports unsaved changes", async ({
+  page,
+}) => {
+  await fixture(page);
+  // 在一个客户端里编辑，再切到另一个：草稿保留，状态仍显示未保存。
+  await page.getByLabel("配置名称").fill("example codex draft");
+  await page.getByRole("tab", { name: "Claude", exact: true }).click();
+  await expect(page.getByText("有未保存修改", { exact: true })).toBeVisible();
+  await page.getByLabel("配置名称").fill("example claude draft");
+  await page.getByRole("tab", { name: "Codex", exact: true }).click();
+  await expect(page.getByLabel("配置名称")).toHaveValue("example codex draft");
+  await page.getByRole("button", { name: "启动", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("未保存修改");
+  expect(await calls(page, "launch")).toBe(0);
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("已保存");
+  const payload = await page.evaluate(() => (window as any).calls.find((c: any) => c.command === "save").args);
+  expect(payload.agent).toBe("codex");
+  expect(payload.draft.codex.library.official_accounts[0].name).toBe("example codex draft");
+  expect(payload.draft.claude.library.official_accounts[0].name).toBe("example claude draft");
 });
 
 test("opens settings; save and keyboard never start client; dirty launch blocked", async ({
@@ -197,7 +226,7 @@ test("settings fit desktop, compact window and large text in both themes", async
       await page.keyboard.press("Space");
       await expect(page.getByRole("button", { name: "浅色", exact: true })).toBeVisible();
     }
-    for (const [width, height] of [[700, 640], [600, 580], [1000, 800]]) {
+    for (const [width, height] of [[700, 720], [600, 620], [1000, 800]]) {
       await page.setViewportSize({ width, height });
       for (const mode of ["官方账号", "自定义 API"]) {
         await page.getByRole("tab", { name: mode, exact: true }).click();
@@ -207,7 +236,8 @@ test("settings fit desktop, compact window and large text in both themes", async
         const formBounds = await page.locator(".form").boundingBox();
         expect(Math.round(formBounds!.width)).toBe(Math.min(width <= 650 ? width - 36 : width - 56, 720));
         expect(Math.abs(formBounds!.x + formBounds!.width / 2 - width / 2)).toBeLessThan(1);
-        if (height === 640)
+        // 默认窗口高度下两种模式都必须完整显示，不出现纵向滚动。
+        if (width === 700)
           expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
         await page.screenshot({
           path: `.impeccable/review/${width}-${mode}${appearance === "dark" ? "-dark" : ""}.png`,

@@ -1,26 +1,11 @@
-# Local builds and compiler output
-ChatGPTApiOnly.exe
-/*.zip
-*.pdb
-*.tmp
-*.tmp-*
-
-# Local Codex configuration and backups
-/config.toml
-/auth.json
-.env
-*.bak
-backups_state/
-launcher-profiles/
-
-# Machine-specific documentation
-README.local.md
-
-# Rust / frontend builds
 /target/
 /dist/
 /node_modules/
-/src-tauri/gen/
+/.impeccable/
 /test-results/
 /playwright-report/
-/.impeccable/
+*.zip
+acs-gui.exe
+acs.exe
+.env
+/src-tauri/gen/

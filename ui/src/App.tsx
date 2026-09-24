@@ -1,5 +1,6 @@
-// Preserve the settings-first desktop workflow: mode tabs, profile fields, tab-local save,
-// and a separate bottom launch action. Temporary edits never leave this window's memory.
+// Preserve the settings-first desktop workflow: client switch, mode tabs, profile fields,
+// tab-local save, and a separate bottom launch action. Temporary edits never leave this
+// window's memory, and both clients are edited from one draft.
 import { useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -11,7 +12,15 @@ import {
 } from "@radix-ui/themes";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Draft, Fields, Mode, Progress, View } from "./types";
+import type {
+  Agent,
+  AgentDraft,
+  Draft,
+  Fields,
+  Mode,
+  Progress,
+  View,
+} from "./types";
 
 type Confirmation = {
   title: string;
@@ -22,19 +31,28 @@ type Confirmation = {
 const clone = <T,>(v: T): T => structuredClone(v);
 const same = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
-const displayAgent = (draft: Draft, agent: "codex" | "claude"): Draft => {
-  const next = clone(draft);
-  const selected = next[agent];
-  next.mode = selected.mode;
-  next.library = selected.library;
-  next.custom_fields = selected.custom_fields;
-  return next;
-};
+const LABEL: Record<Agent, string> = { codex: "Codex", claude: "Claude" };
+function blank(agent: Agent): AgentDraft {
+  return {
+    agent,
+    mode: "official",
+    library: {
+      official_accounts: [],
+      custom_providers: [],
+      selected_official: "",
+      selected_custom: "",
+      official_proxy_url: "",
+      official_model: "",
+      official_effort: "",
+    },
+    custom_fields: {},
+  };
+}
 
 export default function App() {
   const [saved, setSaved] = useState<View>();
   const [draft, setDraft] = useState<Draft>();
-  const [agent, setAgent] = useState<"codex" | "claude">("codex");
+  const [agent, setAgent] = useState<Agent>("codex");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -43,7 +61,8 @@ export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
   );
-  const dirty = !!draft && !!saved && !same(materialize(), saved.draft);
+  // 两个客户端的草稿一起参与比较：切换客户端不算修改，也不丢另一个客户端的编辑。
+  const dirty = !!draft && !!saved && !same(draft, saved.draft);
   const closeRef = useRef<() => void>(() => {});
   const perform = async (label: string, operation: () => Promise<void>) => {
     setBusy(label);
@@ -60,21 +79,7 @@ export default function App() {
   };
   const install = (view: View) => {
     setSaved(view);
-    setDraft(displayAgent(view.draft, agent));
-  };
-  function materialize() {
-    if (!draft) return draft;
-    const next = clone(draft);
-    next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
-    // IPC 顶层兼容字段始终属于 Codex，不能携带当前 Claude 表单。
-    return displayAgent(next, "codex");
-  }
-  const switchAgent = (nextAgent: "codex" | "claude") => {
-    if (!draft || nextAgent === agent) return;
-    const next = clone(draft);
-    next[agent] = { agent, mode: next.mode, library: next.library, custom_fields: next.custom_fields };
-    setDraft(displayAgent(next, nextAgent));
-    setAgent(nextAgent);
+    setDraft(clone(view.draft));
   };
   const reload = () =>
     perform("读取配置", async () => {
@@ -133,39 +138,40 @@ export default function App() {
     };
   }, []);
 
-  const edit = (change: (next: Draft) => void) => {
+  const edit = (change: (active: AgentDraft, draft: Draft) => void) => {
     if (!draft || busy) return;
     const next = clone(draft);
-    change(next);
+    change(next[agent], next);
     setDraft(next);
     setMessage("");
     setError("");
   };
-  const mode = draft?.mode ?? "official";
+  const active = draft?.[agent];
+  const mode = active?.mode ?? "official";
   const collection =
     mode === "official" ? "official_accounts" : "custom_providers";
   const selection =
     mode === "official" ? "selected_official" : "selected_custom";
-  const profiles = draft?.library[collection] ?? [];
-  const id = draft?.library[selection] ?? "";
+  const profiles = active?.library[collection] ?? [];
+  const id = active?.library[selection] ?? "";
   const profile = profiles.find((p) => p.id === id);
-  const fields = draft?.custom_fields[id];
+  const fields = active?.custom_fields[id];
   const add = (copy = false) =>
-    edit((next) => {
+    edit((current) => {
       const newId = crypto.randomUUID().replaceAll("-", "");
       const name = copy
         ? `${profile?.name || "未命名配置"} 副本`
         : mode === "official"
           ? "官方账号"
           : "自定义 API";
-      next.library[collection].push({
+      current.library[collection].push({
         ...(copy ? clone(profile!) : {}),
         id: newId,
         name,
       });
-      next.library[selection] = newId;
+      current.library[selection] = newId;
       if (mode === "custom")
-        next.custom_fields[newId] = copy
+        current.custom_fields[newId] = copy
           ? clone(fields!)
           : {
               provider_name: "custom",
@@ -187,22 +193,28 @@ export default function App() {
       body: "删除只改变当前草稿，点击保存配置后才生效。",
       action: "删除",
       run: () =>
-        edit((next) => {
-          next.library[collection] = next.library[collection].filter(
+        edit((current) => {
+          current.library[collection] = current.library[collection].filter(
             (p) => p.id !== id,
           );
-          next.library[selection] = next.library[collection][0]?.id ?? "";
-          if (mode === "custom") delete next.custom_fields[id];
+          current.library[selection] = current.library[collection][0]?.id ?? "";
+          if (mode === "custom") delete current.custom_fields[id];
         }),
     });
   };
   const field = (key: keyof Fields, value: string) =>
-    edit((next) => {
-      next.custom_fields[id][key] = value;
+    edit((current) => {
+      current.custom_fields[id][key] = value;
     });
   const save = () =>
     perform("保存配置", async () => {
-      install(await invoke<View>("save", { revision: saved!.revision, draft: materialize(), agent }));
+      install(
+        await invoke<View>("save", {
+          revision: saved!.revision,
+          draft,
+          agent,
+        }),
+      );
       setMessage("已保存配置；尚未启动客户端。");
     });
   const launch = () => {
@@ -211,7 +223,7 @@ export default function App() {
       return;
     }
     void perform("启动客户端", async () => {
-      await invoke("launch", { revision: saved!.revision, draft: materialize(), agent });
+      await invoke("launch", { revision: saved!.revision, draft, agent });
     });
   };
   const repair = () =>
@@ -246,7 +258,7 @@ export default function App() {
         <header>
           <div>
             <h1>连接设置</h1>
-            <p>管理官方账号与自定义 API，保存后再启动。</p>
+            <p>管理 Codex 与 Claude 的官方账号和自定义 API，保存后再启动。</p>
           </div>
           <Button
             className="theme-toggle"
@@ -265,23 +277,30 @@ export default function App() {
           </Button>
         </header>
         <section className="content" aria-busy={!!busy}>
-          {draft ? (
+          {active ? (
             <>
             <div className="agent-switch" role="tablist" aria-label="客户端">
               {(["codex", "claude"] as const).map((name) => (
-                <Button key={name} variant={agent === name ? "solid" : "soft"} disabled={!!busy} onClick={() => switchAgent(name)}>
+                <Button
+                  key={name}
+                  variant={agent === name ? "solid" : "soft"}
+                  disabled={!!busy}
+                  role="tab"
+                  aria-selected={agent === name}
+                  onClick={() => setAgent(name)}
+                >
                   <span className={`agent-icon ${name}`} aria-hidden="true">
                     {name === "codex" ? "✦" : "☁"}
                   </span>
-                  <span>{name === "codex" ? "Codex" : "Claude"}</span>
+                  <span>{LABEL[name]}</span>
                 </Button>
               ))}
             </div>
             <Tabs.Root
               value={mode}
               onValueChange={(value) =>
-                edit((next) => {
-                  next.mode = value as Mode;
+                edit((current) => {
+                  current.mode = value as Mode;
                 })
               }
             >
@@ -301,8 +320,8 @@ export default function App() {
                       value={id || undefined}
                       disabled={!profiles.length || !!busy}
                       onValueChange={(value) =>
-                        edit((next) => {
-                          next.library[selection] = value;
+                        edit((current) => {
+                          current.library[selection] = value;
                         })
                       }
                     >
@@ -353,8 +372,8 @@ export default function App() {
                       value={profile.name ?? ""}
                       disabled={!!busy}
                       onChange={(v) =>
-                        edit((next) => {
-                          next.library[collection].find(
+                        edit((current) => {
+                          current.library[collection].find(
                             (p) => p.id === id,
                           )!.name = v;
                         })
@@ -377,29 +396,29 @@ export default function App() {
                         </div>
                         <Field
                           label="官方模型（可留空）"
-                          value={draft.library.official_model ?? ""}
+                          value={active.library.official_model ?? ""}
                           disabled={!!busy}
                           onChange={(v) =>
-                            edit((next) => {
-                              next.library.official_model = v;
+                            edit((current) => {
+                              current.library.official_model = v;
                             })
                           }
                         />
                         <EffortSelect
                           label="思考层级"
-                          value={draft.library.official_effort ?? "medium"}
+                          value={active.library.official_effort ?? "medium"}
                           disabled={!!busy}
-                          onChange={(v) => edit((next) => { next.library.official_effort = v; })}
+                          onChange={(v) => edit((current) => { current.library.official_effort = v; })}
                         />
                         <Field
                           label="HTTP 代理"
-                          value={draft.library.official_proxy_url ?? ""}
+                          value={active.library.official_proxy_url ?? ""}
                           placeholder="http://127.0.0.1:7890"
                           hint="所有官方账号共用。留空不设置独立代理；不修改系统代理。"
                           disabled={!!busy}
                           onChange={(v) =>
-                            edit((next) => {
-                              next.library.official_proxy_url = v;
+                            edit((current) => {
+                              current.library.official_proxy_url = v;
                             })
                           }
                         />
@@ -417,7 +436,7 @@ export default function App() {
                             wide
                             label="API 地址"
                             value={fields.base_url}
-                            placeholder="https://api.example.com/v1"
+                            placeholder={agent === "claude" ? "https://api.example.com" : "https://api.example.com/v1"}
                             disabled={!!busy}
                             onChange={(v) => field("base_url", v)}
                           />
@@ -461,7 +480,7 @@ export default function App() {
                     {busy === "保存配置" ? "正在保存…" : "保存配置"}
                   </Button>
                   <span>{dirty ? "有未保存修改" : "配置未修改"}</span>
-                  {mode === "custom" && (
+                  {mode === "custom" && agent === "codex" && (
                     <Button
                       variant="outline"
                       color="gray"
