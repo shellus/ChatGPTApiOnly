@@ -1,28 +1,32 @@
-# ChatGPT API Only
+# acs
 
-管理 Codex / ChatGPT 桌面客户端与 Codex CLI 的多个官方账号、自定义 API 和独立代理。采用 Rust 共享核心、Tauri 桌面界面和独立命令行入口。
+管理 Codex 与 Claude 的官方账号、自定义 API 和独立代理。采用 Rust 共享核心、Tauri 桌面界面和独立命令行入口。
 
-[下载发布版本](https://github.com/shellus/ChatGPTApiOnly/releases/latest) · [使用与 CLI 命令](docs/features/usage.md) · [架构和行为边界](docs/dev-spec/application-behavior.md)
+[下载发布版本](https://github.com/shellus/acs/releases/latest) · [使用与 CLI 命令](docs/features/usage.md) · [架构和行为边界](docs/dev-spec/application-behavior.md)
 
 ## 支持范围
 
 | 平台 | 入口 | 分发依赖 |
 | --- | --- | --- |
-| Windows x64 | Tauri GUI、CLI | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
-| macOS Apple Silicon | Tauri GUI、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
+| Windows x64 | Tauri GUI（`acs-gui.exe`）、CLI（`acs.exe`） | GUI 使用 WebView2；安装包可在缺失时安装运行时，便携 EXE 要求已安装 WebView2 |
+| macOS Apple Silicon | Tauri GUI（`.app`）、CLI | GUI 使用系统 WKWebView；桌面目标是 Electron 版 Codex.app |
 | Linux x64 | 独立 CLI | musl 静态构建，不依赖 Tauri、WebView、Node.js 或系统 SQLite |
 
 macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的域名阻断参数。
 
+Codex 与 Claude 各自独立生效：可以 Codex 停在官方账号，同时 Claude 走自定义 API。两边的草稿在同一窗口编辑，切换客户端不丢失编辑。
+
 ## 桌面使用
 
-1. 打开应用，选择“官方账号”或“自定义 API”，添加或选择配置。
+1. 打开应用，选择 Codex 或 Claude，再选择“官方账号”或“自定义 API”，添加或选择配置。
 2. 填写并点击当前页的“保存配置”。保存不会启动或停止客户端。
 3. 点击底部“启动”。未保存修改或外部配置变化会阻止启动，并保留草稿。
 
 官方账号通过官方客户端登录。新增账号保存后启动即可登录；本地存在凭据不代表账号有效。官方模式可设置独立 HTTP 代理，自定义模式只阻断 Electron 外壳的指定云端域名，不阻断内置 app-server 访问自定义 API。
 
-关闭按钮、标题栏和 Esc 共用草稿确认。只有显式“修复对话”才改写历史 provider ID，修复前创建备份。
+关闭按钮、标题栏和 Esc 共用草稿确认。只有显式“修复对话”才改写 Codex 历史 provider ID，修复前创建备份。
+
+![官方账号设置](docs/images/official-mode.png)
 
 ![自定义 API 设置](docs/images/custom-mode.png)
 
@@ -34,9 +38,9 @@ macOS 原生 ChatGPT.app 不等同于 Electron Codex.app，不能套用相同的
 npm ci
 npm run build
 cargo fmt --all -- --check
-cargo test -p launcher-core -p chatgpt-api-only --locked
-cargo clippy -p launcher-core -p chatgpt-api-only --all-targets -- -D warnings
-cargo build -p chatgpt-api-only --release --locked
+cargo test -p acs-core -p acs --locked
+cargo clippy -p acs-core -p acs --all-targets -- -D warnings
+cargo build -p acs --release --locked
 ```
 
 Windows / macOS 桌面开发和打包：
@@ -46,7 +50,7 @@ npm run tauri -- dev
 npm run tauri -- build
 ```
 
-仅构建桌面可执行文件：`cargo build -p chatgpt-api-only-desktop --release --locked`，此前须完成 `npm run build`。Windows 产物为 `target/release/ChatGPTApiOnly.exe`，CLI 为 `target/release/chatgpt-api-only`（Windows 带 `.exe`）。
+仅构建桌面可执行文件：`cargo build -p acs-gui --release --locked`，此前须完成 `npm run build`。Windows 产物为 `target/release/acs-gui.exe`，CLI 为 `target/release/acs`（Windows 带 `.exe`）。
 
 ```sh
 npx playwright install chromium
