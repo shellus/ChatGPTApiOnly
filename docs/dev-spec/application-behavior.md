@@ -78,7 +78,6 @@ CI 在三个系统运行核心/CLI 回归，构建 Windows/macOS GUI。构建和
 
 - Claude 没有桌面客户端，GUI 的“启动”对 Claude 走 `launch_desktop` 会直接报“Claude 没有桌面客户端，请直接启动 CLI”。要么让 GUI 对 Claude 启动 CLI，要么在 Claude 选中时明确禁用启动按钮，需要产品决策。
 - 打开 GUI 的“安装客户端”和“检查更新”对 Claude 都跳转到 Claude Code 安装文档，没有区分两个动作。
-- Rust 全仓库格式检查存在未统一的历史格式，涉及 CLI、Claude 和存储模块；需独立执行格式整理。
 - 外部 Codex 不参与操作锁；基线核对与替换间仍有竞争窗口，多文件保存也不是掉电原子事务。
 - SQLite ATTACH 在 WAL、崩溃或掉电条件下不保证跨库提交原子性；备份提供恢复依据。修复应停止客户端写入后执行。
 - rollout 扫描流式处理，但替换/冲突核对阶段仍读取完整文件；极大文件峰值内存待评估。
